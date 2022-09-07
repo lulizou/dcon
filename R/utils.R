@@ -2,6 +2,35 @@
 
 
 
+#' Load in the hic-pro coordinates file
+#' aka the _abs.bed file with the correct resolution bins
+load_coords <- function(filename, type='hic-pro') {
+  coords <- fread(filename, col.names = c('chrom','start','end','id'))
+  coords <- makeGRangesFromDataFrame(coords, keep.extra.columns = T)
+  return(coords)
+}
+coords <- fread('/rafalab/lzou/hichip_mnase/Deep_HC_YET_17_2.5kb_MatrixHiCPro_abs.bed',
+                col.names = c('chrom','start','end','id'))
+chrom_starts <- coords %>% group_by(chrom) %>% dplyr::slice(1)
+coords <- makeGRangesFromDataFrame(coords, keep.extra.columns=T)
+
+
+#' Load in the hichip matrix as a a sparseMatrix
+#' type specifies what type the file is. Currently only supports the hic-pro
+#' .matrix format. Should be made from allValidPairs. 
+#' @param filename specifies the name of the file to load in
+#' @param coords specifies the total dimensions of the matrix, created from bins
+#' using load_coords.
+#' @param type specifies the file type
+#' @param diagonal specifies which entries to 0 out from the diagonal.
+load_hichip <- function(filename, coords, type='hic-pro', diagonal=3) {
+  d <- fread(filename)
+  d <- d %>% filter(abs(V2-V1)>diagonal)
+  d <- sparseMatrix(i = d$V1, j = d$V2, x = d$V3, dims=c(length(coords),length(coords)))
+  return(d)
+}
+
+
 
 
 

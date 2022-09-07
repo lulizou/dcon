@@ -717,6 +717,7 @@ after_mat <- rbind(results$rep1_after, results$rep2_after, results_lps$rep1_afte
 
 ```{r}
 pr_before <- prcomp(before_mat, center=T, scale=T, rank=2)
+before_mat <- before_mat[,-which(colSums(is.na(after_mat))>0)]
 after_mat <- after_mat[,-which(colSums(is.na(after_mat))>0)]
 pr_after <- prcomp(after_mat, center=T, scale=T, rank=2)
 ```
@@ -771,17 +772,19 @@ data.frame(K562_1 = results$rep1_before, LPS853_1 = results_lps$rep1_before,
   theme_classic()
 ```
 
+
 ```{r}
-data.frame(K562_1 = results$rep1_before, LPS853_1 = results_lps$rep1_before,
+data.frame(K562_1 = results$rep1_before, K562_2 = results$rep2_before,
            type = 'before') %>%
-  bind_rows(data.frame(K562_1 = results$rep1_after, LPS853_1 = results_lps$rep1_after,
+  bind_rows(data.frame(K562_1 = results$rep1_after, K562_2 = results$rep2_after,
                        type = 'after')) %>%
   mutate(type = factor(type, levels=c('before','after'))) %>%
-  ggplot(aes(x = log2(K562_1+1), y = log2(LPS853_1+1))) +
+  ggplot(aes(x = K562_1, y = K562_2)) +
   geom_point(alpha=0.25) +
   facet_wrap(type ~ .) +
   theme_classic()
 ```
+
 
 # Compare on LPS141 loops
 
