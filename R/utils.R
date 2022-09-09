@@ -1,5 +1,51 @@
 # accessory functions for importing data
 
+#' Load in anchors
+#' If there are multiple anchor files, can decide whether to use all unique
+#' entries or only take ones in both (intersection). Default is to take the
+#' intersection.
+#' @param ... one or more file names to input. 
+#' @param type the type of the anchor file. Supports fithichip
+#' @param use whether or not to use the intersection or union if there are 
+#' multiple input files
+load_anchors <- function(..., coords, type='fithichip', use='intersection') {
+  if (!use%in%c('union','intersection')) {
+    stop('use parameter must be either union or intersection')
+  }
+  input_files <- list(...)
+  dfs <- list()
+  # load in fithichip
+  bin_pairs <- NULL
+  for (i in 1:length(input_files)) {
+    d <- fread(input_files[[i]])
+    d$bin1 <- left_join(
+      d[,c('chr1','s1','e1')] %>% 
+        dplyr::rename(seqnames=chr1, start=s1, end=e1),
+      as.data.frame(coords) %>% 
+        dplyr::select(seqnames, start, end, id), 
+      by = c("seqnames", "start", "end")) %>% 
+      pull(id)
+    d$bin2 <- left_join(d[,c('chr2','s2','e2')] %>% 
+                          dplyr::rename(seqnames=chr2, start=s2, end=e2),
+                        as.data.frame(coords) %>% 
+                          select(seqnames, start, end, id),
+                        by = c("seqnames", "start", "end")) %>% 
+      pull(id)
+    d$bin_pair <- paste0(d$bin1,',',d$bin2)
+    dfs[[i]] <- d
+    if (is.null(bin_pairs)) {
+      bin_pairs <- d$bin_pair
+    } else {
+      if (use == 'intersection') {
+        bin_pairs <- bin_pairs[bin_pairs %in% dfs[[i]]$bin_pair]
+      } 
+    }
+  }
+  if (use == 'intersection') {
+    dfs[[1]] <- dfs[[1]] %>% dplyr::filter(bin_pair %in% bin_pairs)
+  }
+  return(dfs[[1]])
+}
 
 
 #' Load in the hic-pro coordinates file
@@ -9,10 +55,6 @@ load_coords <- function(filename, type='hic-pro') {
   coords <- makeGRangesFromDataFrame(coords, keep.extra.columns = T)
   return(coords)
 }
-coords <- fread('/rafalab/lzou/hichip_mnase/Deep_HC_YET_17_2.5kb_MatrixHiCPro_abs.bed',
-                col.names = c('chrom','start','end','id'))
-chrom_starts <- coords %>% group_by(chrom) %>% dplyr::slice(1)
-coords <- makeGRangesFromDataFrame(coords, keep.extra.columns=T)
 
 
 #' Load in the hichip matrix as a a sparseMatrix
@@ -67,7 +109,7 @@ normalize_hic <- function(M, sigma=0.2, gamma=1) {
 }
 
 fit_decon <- function(reads, D, DF=21) {
-  B <- constructB(1:length(reads), df=DF)
+  B <- construct_basis(1:length(reads), df=DF)
   starting_a <- rep(0, DF)
   o <- optim(par=starting_a, loglik, y=reads, D=D, B=B, method='BFGS')
   a <- o$par
@@ -89,7 +131,7 @@ decon_to_2d <- function(decon1, decon2, mat) {
 
 
 # Get gaussian basis functions over an interval (vector)
-constructB <- function(interval, df = 10) {
+construct_basis <- function(interval, df = 10) {
   range <- diff(range(interval))
   kn <- seq(min(interval) - (range/(df-3))*3, max(interval) + (range/(df))*3, 
             by = range/(df-3))
@@ -102,9 +144,6 @@ constructB <- function(interval, df = 10) {
   return(B)
 }
 
-constructBstep <- function(interval) {
-  return(diag(length(interval)))
-}
 
 myquadprog <- function(a0, y, D, B, conv = 0.001) {
   lam_threshold = 1e-8; init_val <- -5; MIN_ITERATIONS <- 6
@@ -355,7 +394,7 @@ hess_a_theta_negbin <- function(y, D, B, a, theta) {
   }
   #dtheta^2
   dtheta2 <- sum(-trigamma(y+theta) + trigamma(theta) - (1/theta) +
-    2/(DeBa+theta) + (y+theta)*(DeBa+theta)^(-2))
+                   2/(DeBa+theta) + (y+theta)*(DeBa+theta)^(-2))
   # dthetadalphaj
   dtheta_dalpha <- colSums(sweep(DeBab, 1, FUN='*', -(DeBa+theta)^(-1))) - 
     colSums(sweep(DeBab, 1, FUN='*', (y+theta)*(1/(DeBa+theta)^2)))
