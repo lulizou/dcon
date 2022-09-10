@@ -54,8 +54,11 @@ setMethod(f = 'deconvolve',
                   r1 <- rowSums(m)
                   r2 <- colSums(m)
                   B <- construct_basis(1:length(r1), df=df)
-                  fit_r1 <- fit_decon(r1, hic1)
-                  fit_r2 <- fit_decon(r2, hic2)
+                  fit_r1 <- try(fit_decon(r1, hic1))
+                  fit_r2 <- try(fit_decon(r2, hic2))
+                  if (is(fit_r1, 'try-error') | is(fit_r2, 'try-error')) {
+                    next
+                  }
                   a1 <- fit_r1$a
                   a2 <- fit_r2$a
                   ff1 <- (B%*%a1)-log(sum(exp(B%*%a1)))
