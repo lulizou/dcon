@@ -1,0 +1,781 @@
+---
+output: html_document
+---
+
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(data.table)
+library(ggthemes)
+library(gridExtra)
+library(rtracklayer)
+library(RColorBrewer)
+MIN_PET=3
+options(scipen=999)
+```
+
+```{r}
+
+```
+
+```{r}
+loops <- readRDS('../loops.rds')
+loops$idx <- seq(1,nrow(loops))
+# gather from the first round which was just LPS141 and K562 loops
+chunksize <- 2500
+before <- matrix(NA, nrow = nrow(loops), ncol = 6)
+after <- matrix(NA, nrow = nrow(loops), ncol = 6)
+myfiles <- list.files(pattern = 'dcon_results_chr.*chunk.*rds')
+l1_results <- NULL
+for (f in myfiles) {
+  chrom <- unlist(strsplit(f,'_'))[3]
+  l <- loops %>% filter(chr1==chrom)
+  chunk <- as.integer(gsub('.rds','',gsub('chunk','',unlist(strsplit(f,'_'))[4])))
+  df <- readRDS(f)
+  startidx <- ((chunk-1)*chunksize)+1
+  endidx <- startidx+nrow(df$before)-1
+  if (endidx > nrow(l)) {
+    endidx <- nrow(l)
+  }
+  idx <- l$idx[startidx:endidx]
+  before[idx,] <- df$before
+  after[idx,] <- df$after
+  dd <-  df$df %>% mutate(chunk=chunk, chrom=chrom)
+  if (is.null(l1_results)) {
+    l1_results <- dd
+  } else {
+    l1_results <- l1_results %>% bind_rows(dd)
+  }
+}
+after <- round(after,3)
+```
+
+```{r}
+loops_853 <- readRDS('../loops_853.rds')
+loops_853$idx <- seq(1,nrow(loops_853))
+# gather from the second round which was LPS853 loops
+chunksize <- 2500
+before_853 <- matrix(NA, nrow = nrow(loops_853), ncol = 6)
+after_853 <- matrix(NA, nrow = nrow(loops_853), ncol = 6)
+myfiles <- list.files(pattern = 'dcon_results_lps853_gamma_0.5_chr.*chunk.*rds')
+l1_results_853 <- NULL
+for (f in myfiles) {
+  chrom <- unlist(strsplit(f,'_'))[6]
+  l <- loops_853 %>% filter(chr1==chrom)
+  chunk <- as.integer(gsub('.rds','',gsub('chunk','',unlist(strsplit(f,'_'))[7])))
+  df <- readRDS(f)
+  startidx <- ((chunk-1)*chunksize)+1
+  endidx <- startidx+nrow(df$before)-1
+  if (endidx > nrow(l)) {
+    endidx <- nrow(l)
+  }
+  idx <- l$idx[startidx:endidx]
+  before_853[idx,] <- df$before
+  after_853[idx,] <- df$after
+  dd <-  df$df %>% mutate(chunk=chunk, chrom=chrom)
+  if (is.null(l1_results_853)) {
+    l1_results_853 <- dd
+  } else {
+    l1_results_853 <- l1_results_853 %>% bind_rows(dd)
+  }
+}
+after_853 <- round(after_853,3)
+```
+
+```{r}
+# combine the two above
+loops <- bind_rows(loops, loops_853)
+before <- rbind(before, before_853)
+after <- rbind(after, after_853)
+l1_results_853$loop <- paste0('lps853_', l1_results_853$loop)
+l1_results$loop <- as.character(l1_results$loop)
+l1_results <- bind_rows(l1_results, l1_results_853)
+```
+
+```{r}
+# get rid of any rows with NAs
+# loops <- loops[rowSums(is.na(after))==0,]
+# before <- before[rowSums(is.na(after))==0,]
+# after <- after[rowSums(is.na(after))==0,]
+colnames(before) <- c('k562_1.before','k562_2.before','lps853_1.before','lps853_2.before','lps141_1.before','lps141_2.before')
+colnames(after) <- c('k562_1.after','k562_2.after','lps853_1.after','lps853_2.after','lps141_1.after','lps141_2.after')
+```
+
+
+
+# Compare all
+
+
+```{r}
+l1_results %>%
+  filter(chrom=='chr22') %>%
+  pivot_wider(id_cols = c('m1','m2','loop','chunk','chrom'),names_from = label, values_from=diff) %>%
+  mutate(m1 = factor(m1, levels = c('k562_rep1', 'k562_rep2', 'lps853_rep1', 'lps853_rep2', 'lps141_rep1', 'lps141_rep2')),
+         m2 = factor(m2, levels = c('k562_rep1', 'k562_rep2', 'lps853_rep1', 'lps853_rep2', 'lps141_rep1', 'lps141_rep2'))) %>%
+  ggplot(aes(x = before, y = after)) +
+  geom_point(alpha=0.25, size=0.5) +
+  geom_abline(slope = 1, intercept = 0, lty='dashed', color='red') +
+  facet_grid(m2 ~ m1) +
+  theme_classic()
+```
+
+
+```{r, eval=F}
+l1_results %>%
+  pivot_wider(id_cols = c('m1','m2','loop','chunk','chrom'),names_from = label, values_from=diff) %>%
+  mutate(m1 = factor(m1, levels = c('k562_rep1', 'k562_rep2', 'lps853_rep1', 'lps853_rep2', 'lps141_rep1', 'lps141_rep2')),
+         m2 = factor(m2, levels = c('k562_rep1', 'k562_rep2', 'lps853_rep1', 'lps853_rep2', 'lps141_rep1', 'lps141_rep2'))) %>%
+  ggplot(aes(x = log2(before+1), y = log2(after+1))) +
+  geom_point(alpha=0.05, size=0.2) +
+  geom_abline(slope = 1, intercept = 0, lty='dashed', color='red') +
+  facet_grid(m2 ~ m1) +
+  theme_bw()
+```
+
+# Individual comparisons
+
+```{r}
+l1_results %>%
+  filter(m1 == 'lps853_rep1', m2=='lps853_rep2') %>%
+  pivot_wider(id_cols = c('m1','m2','loop','chunk','chrom'),names_from = label, values_from=diff) %>%
+  ggplot(aes(x = log2(before+1), y= log2(after+1))) +
+  geom_point(alpha=0.1,size=0.1,color='grey') +
+  geom_smooth() +
+  theme_classic() +
+  geom_abline(slope=1, intercept=0, lty='dashed', color='red') +
+  xlab('log2(|LPS853_rep1-LPS853_rep2|)\nbefore deconvolution') +
+  ylab('log2(|LPS853_rep1-LPS853_rep2|)\nafter deconvolution')
+ggsave('lps853_rep1_lps853_rep2_scatter.pdf', height=3, width=3, units='in')
+```
+
+
+```{r}
+l1_results %>%
+  filter(m1 == 'k562_rep1', m2=='lps853_rep1') %>%
+  pivot_wider(id_cols = c('m1','m2','loop','chunk','chrom'),names_from = label, values_from=diff) %>%
+  ggplot(aes(x = log2(before+1), y= log2(after+1))) +
+  geom_point(alpha=0.1,size=0.1,color='grey') +
+  geom_smooth() +
+  theme_classic() +
+  geom_abline(slope=1, intercept=0, lty='dashed', color='red') +
+  xlab('log2(|K562_rep1-LPS853_rep1|)\nbefore deconvolution') +
+  ylab('log2(|K562_rep1-LPS853_rep1|)\nafter deconvolution')
+ggsave('k562_rep1_lps853_rep1_scatter.pdf', height=3, width=3, units='in')
+```
+
+
+
+# L1 norm before vs after summary graph
+
+```{r}
+symmetric_result <- matrix(data = 0, nrow = 6, ncol = 6)
+rownames(symmetric_result) <- colnames(symmetric_result) <- c('K562_rep1', 'K562_rep2', 'LPS853_rep1', 'LPS853_rep2', 'LPS141_rep1', 'LPS141_rep2')
+
+d1 <- l1_results %>%
+  mutate(m1 = factor(m1, levels = c('k562_rep1', 'k562_rep2', 'lps853_rep1', 'lps853_rep2', 'lps141_rep1', 'lps141_rep2')),
+         m2 = factor(m2, levels = c('k562_rep1', 'k562_rep2', 'lps853_rep1', 'lps853_rep2', 'lps141_rep1', 'lps141_rep2'))) %>%
+  group_by(m1, m2, label) %>%
+  summarise(avg_diff = mean(diff)) %>%
+  filter(label=='after') %>%
+  pivot_wider(names_from=m2, values_from=avg_diff,values_fill=0)
+
+d2 <- l1_results %>%
+  mutate(m1 = factor(m1, levels = c('k562_rep1', 'k562_rep2', 'lps853_rep1', 'lps853_rep2', 'lps141_rep1', 'lps141_rep2')),
+         m2 = factor(m2, levels = c('k562_rep1', 'k562_rep2', 'lps853_rep1', 'lps853_rep2', 'lps141_rep1', 'lps141_rep2'))) %>%
+  group_by(m1, m2, label) %>%
+  summarise(avg_diff = mean(diff)) %>%
+  filter(label=='before') %>%
+  pivot_wider(names_from=m2, values_from=avg_diff,values_fill=0)
+
+symmetric_result[1:5,2:6] <- as.matrix(d1[1:5,3:7])
+symmetric_result[2:6,1:5] <- symmetric_result[2:6,1:5]+t(as.matrix(d1[1:5,3:7]))
+diag(symmetric_result) <- NA
+
+points_before <- reshape2::melt(symmetric_result) %>% mutate(label='after')
+
+symmetric_result <- matrix(data = 0, nrow = 6, ncol = 6)
+rownames(symmetric_result) <- colnames(symmetric_result) <- c('K562_rep1', 'K562_rep2', 'LPS853_rep1', 'LPS853_rep2', 'LPS141_rep1', 'LPS141_rep2')
+
+symmetric_result[1:5,2:6] <- as.matrix(d2[1:5,3:7])
+symmetric_result[2:6,1:5] <- symmetric_result[2:6,1:5]+t(as.matrix(d2[1:5,3:7]))
+diag(symmetric_result) <- NA
+
+points_after <- reshape2::melt(symmetric_result) %>% mutate(label='before')
+
+points_before %>%
+  bind_rows(points_after) %>%
+  mutate(label = factor(label, levels = c('before','after'))) %>%
+  mutate(color = case_when(
+    label=='before' ~ 'forestgreen',
+    label=='after' ~ 'deeppink'
+  )) %>%
+  mutate(shape = case_when(
+    grepl('K562', Var2) ~ 16,
+    grepl('LPS853', Var2) ~ 3,
+    grepl('LPS141', Var2) ~ 8
+  )) %>%
+  ggplot(aes(x = Var1, y= value)) +
+  geom_point(aes(color=color, shape=shape)) +
+  scale_color_identity(guide='legend', name = '', breaks = c('forestgreen','deeppink'),
+                       labels = c('before','after')) +
+  scale_shape_identity(guide = 'legend', name = '', breaks = c(16,3,8), labels = c('K562', 'LPS853', 'LPS141')) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle=90, hjust=1)) +
+  ylab('Average Difference') +
+  xlab('Sample')
+ggsave('point_plot_all_reps.pdf', height=3, width=3, units='in')
+#ggsave('point_plot_all_reps_legend.pdf', height=4, width=3, units='in')
+```
+
+
+# Signal per loop divided into overlapping a chip-seq peak or not
+
+```{r}
+# k562_before <- before[loops$label=='k562',]
+# k562_after <- after[loops$label=='k562',]
+# k562_loops <- loops[loops$label=='k562',]
+k562_before <- before
+k562_after <- after
+k562_loops <- loops
+chip <- fread('/rafalab/lzou/chip/K562_hg38_CTCF_chip_narrowPeak_ENCFF843VHC.bed.gz', header=F, col.names = c('chrom','start','end','idk1','idk2','idk3','idk4','idk5','idk6','idk7')) %>% arrange(chrom, start)
+ovl <- data.frame(findOverlaps(makeGRangesFromDataFrame(k562_loops %>% dplyr::select(chr1, s1, e1) %>% dplyr::rename(chrom = chr1, start = s1, end = e1)), makeGRangesFromDataFrame(chip)))
+k562_loops$chip1 <- 0
+k562_loops$chip1[unique(ovl$queryHits)] <- 1
+ovl <- data.frame(findOverlaps(makeGRangesFromDataFrame(k562_loops %>% dplyr::select(chr2, s2, e2) %>% dplyr::rename(chrom = chr2, start = s2, end = e2)), makeGRangesFromDataFrame(chip)))
+k562_loops$chip2 <- 0
+k562_loops$chip2[unique(ovl$queryHits)] <- 1
+```
+
+```{r}
+k562_loops %>%
+  mutate(before = k562_before[,1], after = k562_after[,1]) %>%
+  mutate(chip = case_when(
+    chip1+chip2 == 0 ~ '0:0',
+    chip1+chip2 == 1 ~ '0:1',
+    chip1+chip2 == 2 ~ '1:1'
+  )) %>%
+  mutate(chip = factor(chip)) %>%
+  mutate(diff = after-before) %>%
+  dplyr::select(chip, diff) %>%
+  ggplot(aes(x = log2(diff+1))) +
+  geom_density(aes(color = chip, fill = chip), alpha=0.25) +
+  theme_classic()
+```
+
+
+```{r}
+k562_loops %>%
+  mutate(before = k562_before[,1], after = k562_after[,1]) %>%
+  mutate(chip = case_when(
+    chip1+chip2 == 0 ~ '0:0',
+    chip1+chip2 == 1 ~ '0:1',
+    chip1+chip2 == 2 ~ '1:1'
+  )) %>%
+  mutate(chip = factor(chip)) %>%
+  mutate(diff = after-before) %>%
+  dplyr::select(chip, diff) %>%
+  ggplot(aes(x = log2(diff+1))) +
+  geom_density(aes(color = chip, fill = chip), alpha=0.25) +
+  facet_wrap(chip ~ ., scales='free')+
+  theme_classic()
+```
+
+
+```{r}
+# get n for each boxplot
+nlabel <- k562_loops %>%
+  mutate(before = k562_before[,1], after = k562_after[,1]) %>%
+  mutate(chip = case_when(
+    chip1+chip2 == 0 ~ '0:0',
+    chip1+chip2 == 1 ~ '0:1',
+    chip1+chip2 == 2 ~ '1:1'
+  )) %>%
+  mutate(chip = factor(chip)) %>%
+  pull(chip) %>%
+  summary()
+nlabel <- paste0(names(nlabel),'\nn=',prettyNum(nlabel, big.mark=','))
+
+k562_loops %>%
+  mutate(before1 = k562_before[,1], after1 = k562_after[,1], before2 = k562_before[,2], after2 = k562_after[,2]) %>%
+  mutate(chip = case_when(
+    chip1+chip2 == 0 ~ '0:0',
+    chip1+chip2 == 1 ~ '0:1',
+    chip1+chip2 == 2 ~ '1:1'
+  )) %>%
+  mutate(chip = factor(chip)) %>%
+  mutate(diff1 = after1-before1, diff2 = after2-before2) %>%
+  mutate(diff = (diff1+diff2)/2) %>%
+  dplyr::select(chip, diff) %>%
+  ggplot(aes(x = chip, y = log2(diff+1))) +
+  geom_boxplot(outlier.shape=NA) +
+  ylim(c(-5,6)) +
+  scale_x_discrete(labels = nlabel) +
+  theme_classic() +
+  geom_hline(yintercept=0, lty='dashed', color='red') +
+  xlab('ChIP-seq peak at anchor') +
+  ylab('log2(avg. difference)')
+ggsave('k562_chip_seq_anchor_boxplots.pdf', height=3, width=3, units='in')
+```
+
+
+## Boxplots for chip-seq for all samples
+
+
+```{r}
+# get consensus LPS141 peaks
+chip1 <- fread('/rafalab/lzou/chip/200325_LPS141_H3K27acAligned_peaks.narrowPeak', header=F, col.names = c('chrom','start','end','name','idk1','idk2','idk3','idk4','idk5','idk6'))
+chip2 <- fread('/rafalab/lzou/chip/210127_LPS141_200910_201204_DMSO_201208_K27acAligned_peaks.narrowPeak', header=F, col.names = c('chrom','start','end','name','idk1','idk2','idk3','idk4','idk5','idk6'))
+lps141_chip <- chip2[unique(subjectHits(findOverlaps(makeGRangesFromDataFrame(chip1), makeGRangesFromDataFrame(chip2)))),]
+# get consensus LPS853peaks
+chip1 <- fread('/rafalab/lzou/chip/210127_LPS853_200910_DMSO_201208_K27acAligned_peaks.narrowPeak', header=F, col.names = c('chrom','start','end','name','idk1','idk2','idk3','idk4','idk5','idk6'))
+chip2 <- fread('/rafalab/lzou/chip/210308_LPS853_DMSO_H3K27acAligned.sortedByCoord_peaks.narrowPeak', header=F, col.names = c('chrom','start','end','name','idk1','idk2','idk3','idk4','idk5','idk6'))
+lps853_chip <- chip2[unique(subjectHits(findOverlaps(makeGRangesFromDataFrame(chip1), makeGRangesFromDataFrame(chip2)))),]
+```
+
+
+```{r}
+lps141_before <- before
+lps141_after <- after
+lps141_loops <- loops
+ovl <- data.frame(findOverlaps(makeGRangesFromDataFrame(lps141_loops %>% dplyr::select(chr1, s1, e1) %>% dplyr::rename(chrom = chr1, start = s1, end = e1)), makeGRangesFromDataFrame(lps141_chip)))
+lps141_loops$chip1 <- 0
+lps141_loops$chip1[unique(ovl$queryHits)] <- 1
+ovl <- data.frame(findOverlaps(makeGRangesFromDataFrame(lps141_loops %>% dplyr::select(chr2, s2, e2) %>% dplyr::rename(chrom = chr2, start = s2, end = e2)), makeGRangesFromDataFrame(lps141_chip)))
+lps141_loops$chip2 <- 0
+lps141_loops$chip2[unique(ovl$queryHits)] <- 1
+lps141_loops %>%
+  mutate(before = lps141_before[,5], after = lps141_after[,5]) %>%
+  mutate(chip = case_when(
+    chip1+chip2 == 0 ~ '0:0',
+    chip1+chip2 == 1 ~ '0:1',
+    chip1+chip2 == 2 ~ '1:1'
+  )) %>%
+  mutate(chip = factor(chip)) %>%
+  mutate(diff = after-before) %>%
+  dplyr::select(chip, diff) %>%
+  ggplot(aes(x = chip, y = log2(diff+1))) +
+  geom_boxplot(outlier.shape=NA) +
+  theme_classic()
+```
+
+
+
+```{r}
+lps853_before <- before
+lps853_after <- after
+lps853_loops <- loops
+ovl <- data.frame(findOverlaps(makeGRangesFromDataFrame(lps853_loops %>% dplyr::select(chr1, s1, e1) %>% dplyr::rename(chrom = chr1, start = s1, end = e1)), makeGRangesFromDataFrame(lps853_chip)))
+lps853_loops$chip1 <- 0
+lps853_loops$chip1[unique(ovl$queryHits)] <- 1
+ovl <- data.frame(findOverlaps(makeGRangesFromDataFrame(lps853_loops %>% dplyr::select(chr2, s2, e2) %>% dplyr::rename(chrom = chr2, start = s2, end = e2)), makeGRangesFromDataFrame(lps853_chip)))
+lps853_loops$chip2 <- 0
+lps853_loops$chip2[unique(ovl$queryHits)] <- 1
+lps853_loops %>%
+  mutate(before = lps853_before[,5], after = lps853_after[,5]) %>%
+  mutate(chip = case_when(
+    chip1+chip2 == 0 ~ '0:0',
+    chip1+chip2 == 1 ~ '0:1',
+    chip1+chip2 == 2 ~ '1:1'
+  )) %>%
+  mutate(chip = factor(chip)) %>%
+  mutate(diff = after-before) %>%
+  dplyr::select(chip, diff) %>%
+  ggplot(aes(x = chip, y = log2(diff+1))) +
+  geom_boxplot(outlier.shape=NA) +
+  theme_classic()
+```
+
+
+
+
+# Detect differential loops between LPS141 and LPS853 before and after deconvolution
+
+```{r}
+library(DESeq2)
+library(apeglm)
+na_idx <- which(rowSums(is.na(before))>0 | rowSums(is.na(after))>0)
+# before
+cts_before <- before[-na_idx,3:6]
+cts_after <- after[-na_idx,3:6]
+loops_subset <- loops[-na_idx,]
+idx_filter_10 <- which(rowSums(cts_before)>=10 & rowSums(cts_after)>=10)
+cts_before <- cts_before[idx_filter_10,]
+cts_after <- cts_after[idx_filter_10,]
+loops_subset <- loops_subset[idx_filter_10,]
+loops_subset$id <- paste(loops_subset$label, loops_subset$chr1, loops_subset$idx, sep='-')
+rownames(cts_before) <- rownames(cts_after) <- loops_subset$id
+colnames(cts_before) <- c('lps853_1','lps853_2','lps141_1','lps141_2')
+coldata <- data.frame(condition = c('lps853','lps853','lps141','lps141'))
+rownames(coldata) <- colnames(cts_before)
+dds <- DESeqDataSetFromMatrix(countData = cts_before, colData = coldata, design = ~ condition)
+dds <- DESeq(dds)
+res <- results(dds)
+resLFC_before <- lfcShrink(dds, coef='condition_lps853_vs_lps141', type='apeglm')
+# after
+colnames(cts_after) <- c('lps853_1','lps853_2','lps141_1','lps141_2')
+coldata <- data.frame(condition = c('lps853','lps853','lps141','lps141'))
+rownames(coldata) <- colnames(cts_after)
+dds <- DESeqDataSetFromMatrix(countData = round(cts_after), colData = coldata, design = ~ condition)
+dds <- DESeq(dds)
+res <- results(dds)
+resLFC_after <- lfcShrink(dds, coef='condition_lps853_vs_lps141', type='apeglm')
+```
+
+```{r}
+plotMA(resLFC_before)
+```
+
+```{r}
+plotMA(resLFC_after)
+```
+
+
+## Get loops that change significance
+
+```{r}
+df_before <- data.frame(resLFC_before) %>%
+  arrange(padj) %>%
+  filter(padj < 0.05)
+df_before <- df_before[grepl('lps',rownames(df_before)),]
+df_after <- data.frame(resLFC_after) %>%
+  arrange(padj) %>%
+  filter(padj < 0.05)
+df_after <- df_after[grepl('lps',rownames(df_after)),]
+
+stay_sig <- rownames(df_before)[which(rownames(df_before)%in%rownames(df_after))]
+not_sig <- rownames(df_before)[which(!rownames(df_before)%in%rownames(df_after))]
+new_sig <- rownames(df_after)[which(!rownames(df_after)%in%rownames(df_before))]
+```
+
+## Characterize E_E E_P and P_P
+
+```{r}
+e_e <- bind_rows(fread('/rafalab/lzou/hichip_lps/loops/LPS141_1_E_E_loops.bedpe', header=F, col.names = c('chr1','s1','e1','chr2','s2','e2','idk1','idk2')),fread('/rafalab/lzou/hichip_lps/loops/LPS141_2_E_E_loops.bedpe', header=F, col.names = c('chr1','s1','e1','chr2','s2','e2','idk1','idk2')),fread('/rafalab/lzou/hichip_lps/loops/LPS853_1_E_E_loops.bedpe', header=F, col.names = c('chr1','s1','e1','chr2','s2','e2','idk1','idk2')),fread('/rafalab/lzou/hichip_lps/loops/LPS853_2_E_E_loops.bedpe', header=F, col.names = c('chr1','s1','e1','chr2','s2','e2','idk1','idk2'))) %>%
+  dplyr::select(-idk1, -idk2) %>% mutate(type='E_E')
+e_p <- bind_rows(fread('/rafalab/lzou/hichip_lps/loops/LPS141_1_E_P_loops.bedpe', header=F, col.names = c('chr1','s1','e1','chr2','s2','e2','idk1','idk2')), fread('/rafalab/lzou/hichip_lps/loops/LPS141_2_E_P_loops.bedpe', header=F, col.names = c('chr1','s1','e1','chr2','s2','e2','idk1','idk2')),fread('/rafalab/lzou/hichip_lps/loops/LPS853_1_E_P_loops.bedpe', header=F, col.names = c('chr1','s1','e1','chr2','s2','e2','idk1','idk2')), fread('/rafalab/lzou/hichip_lps/loops/LPS853_2_E_P_loops.bedpe', header=F, col.names = c('chr1','s1','e1','chr2','s2','e2','idk1','idk2'))) %>%
+  dplyr::select(-idk1, -idk2) %>% mutate(type='E_P')
+p_p <- bind_rows(fread('/rafalab/lzou/hichip_lps/loops/LPS141_1_P_P_loops.bedpe', header=F, col.names = c('chr1','s1','e1','chr2','s2','e2','idk1','idk2')), fread('/rafalab/lzou/hichip_lps/loops/LPS141_2_P_P_loops.bedpe', header=F, col.names = c('chr1','s1','e1','chr2','s2','e2','idk1','idk2')),fread('/rafalab/lzou/hichip_lps/loops/LPS853_1_P_P_loops.bedpe', header=F, col.names = c('chr1','s1','e1','chr2','s2','e2','idk1','idk2')), fread('/rafalab/lzou/hichip_lps/loops/LPS853_2_P_P_loops.bedpe', header=F, col.names = c('chr1','s1','e1','chr2','s2','e2','idk1','idk2'))) %>%
+  dplyr::select(-idk1, -idk2) %>% mutate(type='P_P')
+e_p_df <- bind_rows(e_e, e_p, p_p)
+RESOLUTION=2500
+e_p_df$s1 <- floor(e_p_df$s1/RESOLUTION)*RESOLUTION
+e_p_df$s2 <- floor(e_p_df$s2/RESOLUTION)*RESOLUTION
+e_p_df$e1 <- floor(e_p_df$e1/RESOLUTION)*RESOLUTION
+e_p_df$e2 <- floor(e_p_df$e2/RESOLUTION)*RESOLUTION
+
+stay_sig_loops <- loops_subset[loops_subset$id %in% stay_sig]
+stay_sig_loops <- stay_sig_loops %>% left_join(e_p_df) %>% distinct() %>% mutate(label = 'stay')
+not_sig_loops <- loops_subset[loops_subset$id %in% not_sig]
+not_sig_loops <- not_sig_loops %>% left_join(e_p_df) %>% distinct() %>% mutate(label = 'not')
+new_sig_loops <- loops_subset[loops_subset$id %in% new_sig]
+new_sig_loops <- new_sig_loops %>% left_join(e_p_df) %>% distinct() %>% mutate(label = 'new')
+other_loops <- loops_subset[!(loops_subset$id %in% c(stay_sig,not_sig,new_sig))]
+other_loops <- other_loops %>% left_join(e_p_df) %>% distinct() %>% mutate(label = 'other')
+```
+
+
+```{r}
+bind_rows(stay_sig_loops, not_sig_loops, new_sig_loops) %>%
+  dplyr::select(label, type) %>%
+  group_by(label, type) %>%
+  summarise(count=n()) %>%
+  mutate(label = factor(label, levels = c('stay', 'new', 'not'))) %>%
+  ggplot(aes(x = type, y = count)) +
+  geom_bar(stat='identity', aes(fill=label), color='black') +
+  scale_fill_tableau(name='Significance\nafter dcon') +
+  theme_classic() +
+  xlab('') +
+  ylab('n significant loops')
+ggsave('bar_plot_e_p.pdf', height=3, width=3, units='in')
+```
+
+## Look at effect size differences in loops before and after
+
+```{r}
+compare <- data.frame(loop = rownames(resLFC_before),
+           baseMean_before = resLFC_before$baseMean,
+           log2FoldChange_before = resLFC_before$log2FoldChange,
+           pvalue_before = resLFC_before$pvalue,
+           padj_before = resLFC_before$padj,
+           baseMean_after = resLFC_after$baseMean,
+           log2FoldChange_after = resLFC_after$log2FoldChange,
+           pvalue_after = resLFC_after$pvalue,
+           padj_after = resLFC_after$padj)
+
+stay_sig_df <- bind_rows(stay_sig_loops[,c('id','label')],
+                         not_sig_loops[,c('id','label')],
+                         new_sig_loops[,c('id','label')])
+
+
+compare %>%
+  left_join(stay_sig_df, by = c('loop'='id')) %>%
+  ggplot(aes(x = log2FoldChange_before, y = log2FoldChange_after)) +
+  geom_point(aes(color = -log10(pvalue_after)), alpha=0.25) +
+  scale_color_viridis() +
+  geom_hline(yintercept=0, lty='dashed', color='grey') +
+  geom_vline(xintercept=0, lty='dashed', color='grey') +
+  theme_classic()
+ggsave('log2fc_loops_before_after_colored_by_pvalue.pdf', height=3, width=5)
+
+
+compare %>%
+  left_join(stay_sig_df, by = c('loop'='id')) %>%
+  mutate(label = ifelse(is.na(label), '', label)) %>%
+  mutate(label = factor(label, levels = c('stay','new','not',''))) %>%
+  mutate(alpha = ifelse(label=='',0.05, 0.75)) %>%
+  ggplot(aes(x = log2FoldChange_before, y = log2FoldChange_after)) +
+  geom_point(aes(color = label, alpha=alpha)) +
+  scale_alpha_identity() +
+  scale_color_tableau() +
+  geom_hline(yintercept=0, lty='dashed', color='grey') +
+  geom_vline(xintercept=0, lty='dashed', color='grey') +
+  theme_classic() +
+  xlab('loop strength log2FoldChange before') +
+  ylab('loop strength log2FoldChange after')
+ggsave('log2fc_loops_before_after_colored_by_label.pdf', height=3, width=4)
+```
+
+
+
+
+## Differential expression and label genes associated with loops w/ promoters
+
+```{r}
+rna141 <- fread('/rafalab/lzou/hichip_lps/rna/lps141_rna_countMatrix.txt')
+rna853 <- fread('/rafalab/lzou/hichip_lps/rna/lps853_rna_countMatrix.txt')
+colnames(rna141)[1] <- colnames(rna853)[1] <- 'gene'
+rna853 <- rna853[rna853$gene %in% rna141$gene]
+rna141 <- rna141[rna141$gene %in% rna853$gene]
+cts <- cbind(rna141[,4:5], rna853[,4:5])
+cts <- data.frame(cts)
+rownames(cts) <- rna141$gene
+colnames(cts) <- c('lps141_1', 'lps141_2', 'lps853_1', 'lps853_2')
+coldata <- data.frame(condition = factor(c('lps141','lps141','lps853','lps853')))
+rownames(coldata) <- colnames(cts)
+dds <- DESeqDataSetFromMatrix(countData = cts, colData = coldata, design = ~ condition)
+dds <- DESeq(dds)
+res <- results(dds)
+resLFC <- lfcShrink(dds, coef='condition_lps853_vs_lps141', type='apeglm')
+saveRDS(resLFC, file = 'lps141_vs_lps853_baseline_deseq.rds')
+```
+
+
+plot loop logfoldchange vs. gene logfoldchange and preserve sign before and after
+
+or do the difference
+
+
+
+
+
+
+
+```{r}
+gencode <- import('/rafalab/lzou/resources/gencode.v41.annotation.gtf.gz')
+# get TSS's; gene start if strand +, gene end if strand -
+gencode <- gencode[gencode$type=='gene']
+gencode$TSS <- ifelse(strand(gencode)=='+', start(ranges(gencode)), end(ranges(gencode)))
+gencode$TSSend <- ifelse(strand(gencode)=='+', start(ranges(gencode))+1, end(ranges(gencode))-1)
+tss_gr <- GRanges(seqnames = seqnames(gencode), ranges = IRanges(start=gencode$TSS, end=gencode$TSSend),gene_name = gencode$gene_name)
+```
+
+```{r}
+d <- stay_sig_loops %>%
+  filter(grepl('P',type))
+d <- rbind(d %>% dplyr::select(chr1, s1, e1), d %>% dplyr::select(chr2, s2, e2), use.names=F) 
+colnames(d) <- c('chrom','start','end')
+ovl <- findOverlaps(makeGRangesFromDataFrame(d), tss_gr)
+genes_stay_sig <- unique(tss_gr$gene_name[subjectHits(ovl)])
+
+d <- new_sig_loops %>%
+  filter(grepl('P',type))
+d <- rbind(d %>% dplyr::select(chr1, s1, e1), d %>% dplyr::select(chr2, s2, e2), use.names=F) 
+colnames(d) <- c('chrom','start','end')
+ovl <- findOverlaps(makeGRangesFromDataFrame(d), tss_gr)
+genes_new_sig <- unique(tss_gr$gene_name[subjectHits(ovl)])
+
+d <- not_sig_loops %>%
+  filter(grepl('P',type))
+d <- rbind(d %>% dplyr::select(chr1, s1, e1), d %>% dplyr::select(chr2, s2, e2), use.names=F) 
+colnames(d) <- c('chrom','start','end')
+ovl <- findOverlaps(makeGRangesFromDataFrame(d), tss_gr)
+genes_not_sig <- unique(tss_gr$gene_name[subjectHits(ovl)])
+```
+
+### Dealing with overlaps in the gene lists...
+
+
+```{r}
+genes_not_sig <- genes_not_sig[!(genes_not_sig %in% c(genes_new_sig, genes_stay_sig))]
+genes_new_sig <- genes_new_sig[!(genes_new_sig %in% c(genes_stay_sig))]
+```
+
+
+### Volcano plot
+
+
+```{r}
+gdf <- data.frame(resLFC)
+gdf$gene <- rownames(gdf)
+
+gdf %>%
+  mutate(label = case_when(
+    gene %in% genes_stay_sig ~ 'stay',
+    gene %in% genes_new_sig ~ 'new',
+    gene %in% genes_not_sig ~ 'not',
+    TRUE ~ ''
+  )) %>%
+  mutate(label = factor(label, levels=c('stay','new','not', ''))) %>%
+  mutate(alpha = ifelse(label=='', 0.05, 1)) %>%
+  ggplot(aes(x = log2FoldChange, y = -log10(pvalue))) +
+  geom_point(aes(color=label, alpha=alpha)) +
+  scale_color_tableau() +
+  scale_alpha_identity() +
+  theme_classic() +
+  xlab('gene expression log2FoldChange')
+ggsave('gene_volcano_plot.pdf', height=3, width=4, units='in')
+```
+
+
+```{r}
+# get n for each boxplot
+gdf <- gdf %>%
+  mutate(label = case_when(
+    gene %in% genes_stay_sig ~ 'stay',
+    gene %in% genes_new_sig ~ 'new',
+    gene %in% genes_not_sig ~ 'not',
+    TRUE ~ ''
+  )) %>%
+  mutate(label = factor(label, levels=c('stay','new','not', ''))) %>%
+  filter(label %in% c('stay', 'new', 'not')) 
+
+nlabel <- gdf %>%
+  mutate(label = factor(label, levels=c('stay','new','not'))) %>%
+  pull(label) %>%
+  summary()
+nlabel <- paste0(names(nlabel),'\nn=',prettyNum(nlabel, big.mark=','))
+
+gdf %>%
+  ggplot(aes(x = label, y = abs(log2FoldChange))) +
+  geom_boxplot(aes(fill=label)) +
+  scale_fill_tableau() +
+  #ylim(c(0,3.5)) +
+  theme_classic() +
+  scale_x_discrete(labels = nlabel) +
+  xlab('') +
+  ylab('abs. log2FoldChange gene exp.')
+ggsave('stay_not_new_abs_lfc_boxplots.pdf', height=3, width=4, units='in')
+```
+
+
+```{r}
+# plot LFC loop vs. LFC gene
+d <- stay_sig_loops %>%
+  filter(grepl('P',type))
+ovl <- findOverlaps(makeGRangesFromDataFrame(d %>% dplyr::select(chr1, s1, e1) %>% dplyr::rename(chrom=chr1, start=s1, end=e1)), tss_gr)
+matchdf_stay <- cbind(data.frame(ovl), data.frame(gene=tss_gr$gene_name[subjectHits(ovl)])) %>%
+  dplyr::select(-subjectHits) %>% 
+  mutate(loop_before = compare[d$id[queryHits(ovl)],'log2FoldChange_before'],
+         loop_after = compare[d$id[queryHits(ovl)],'log2FoldChange_after']) %>%
+  left_join(gdf %>% dplyr::select(gene, log2FoldChange) %>% dplyr::rename(gene_lfc = log2FoldChange)) %>%
+  distinct() %>%
+  mutate(type='stay')
+
+d <- new_sig_loops %>%
+  filter(grepl('P',type))
+ovl <- findOverlaps(makeGRangesFromDataFrame(d %>% dplyr::select(chr1, s1, e1) %>% dplyr::rename(chrom=chr1, start=s1, end=e1)), tss_gr)
+matchdf_new <- cbind(data.frame(ovl), data.frame(gene=tss_gr$gene_name[subjectHits(ovl)])) %>%
+  dplyr::select(-subjectHits) %>% 
+  mutate(loop_before = compare[d$id[queryHits(ovl)],'log2FoldChange_before'],
+         loop_after = compare[d$id[queryHits(ovl)],'log2FoldChange_after']) %>%
+  left_join(gdf %>% dplyr::select(gene, log2FoldChange) %>% dplyr::rename(gene_lfc = log2FoldChange)) %>%
+  distinct() %>%
+  mutate(type='new')
+
+d <- not_sig_loops %>%
+  filter(grepl('P',type))
+ovl <- findOverlaps(makeGRangesFromDataFrame(d %>% dplyr::select(chr1, s1, e1) %>% dplyr::rename(chrom=chr1, start=s1, end=e1)), tss_gr)
+matchdf_not <- cbind(data.frame(ovl), data.frame(gene=tss_gr$gene_name[subjectHits(ovl)])) %>%
+  dplyr::select(-subjectHits) %>% 
+  mutate(loop_before = compare[d$id[queryHits(ovl)],'log2FoldChange_before'],
+         loop_after = compare[d$id[queryHits(ovl)],'log2FoldChange_after']) %>%
+  left_join(gdf %>% dplyr::select(gene, log2FoldChange) %>% dplyr::rename(gene_lfc = log2FoldChange)) %>%
+  distinct() %>%
+  mutate(type='not')
+
+d <- other_loops %>%
+  filter(grepl('P',type))
+ovl <- findOverlaps(makeGRangesFromDataFrame(d %>% dplyr::select(chr1, s1, e1) %>% dplyr::rename(chrom=chr1, start=s1, end=e1)), tss_gr)
+matchdf_other <- cbind(data.frame(ovl), data.frame(gene=tss_gr$gene_name[subjectHits(ovl)])) %>%
+  dplyr::select(-subjectHits) %>% 
+  mutate(loop_before = compare[d$id[queryHits(ovl)],'log2FoldChange_before'],
+         loop_after = compare[d$id[queryHits(ovl)],'log2FoldChange_after']) %>%
+  left_join(gdf %>% dplyr::select(gene, log2FoldChange) %>% dplyr::rename(gene_lfc = log2FoldChange)) %>%
+  distinct() %>%
+  mutate(type='other')
+
+# remove dupes
+matchdf_not <- matchdf_not[!(matchdf_not$gene %in% c(matchdf_new$gene, matchdf_stay$gene)),]
+matchdf_new <- matchdf_new[!(matchdf_new$gene %in% c(matchdf_stay$gene)),]
+matchdf_other <- matchdf_other[!matchdf_other$gene %in% c(matchdf_new$gene, matchdf_stay$gene, matchdf_not$gene),]
+
+matchdf <- bind_rows(matchdf_stay, matchdf_new, matchdf_not) %>%
+  select(-queryHits) %>%
+  distinct() %>%
+  filter(!is.na(gene_lfc)) %>%
+  group_by(gene, type) %>%
+  summarise(loop_before = mean(loop_before), loop_after = mean(loop_after),
+            gene_lfc = mean(gene_lfc))
+
+
+d1 <- matchdf %>%
+  ggplot(aes(x = loop_before, y = gene_lfc)) +
+  geom_point(alpha=0.5) +
+  geom_hline(yintercept=0, lty='dashed', color='grey') +
+  geom_vline(xintercept=0, lty='dashed', color='grey') +
+  xlim(c(-6,6)) +
+  theme_classic()
+d2 <- matchdf %>%
+  ggplot(aes(x = loop_after, y= gene_lfc)) +
+  geom_point(alpha=0.5) +
+  geom_hline(yintercept=0, lty='dashed', color='grey') +
+  geom_vline(xintercept=0, lty='dashed', color='grey') +
+  xlim(c(-6,6)) +
+  theme_classic()
+d3 <- matchdf %>%
+  ggplot(aes(x = loop_after-loop_before, y= gene_lfc)) +
+  geom_point(alpha=0.5) +
+  geom_hline(yintercept=0, lty='dashed', color='grey') +
+  geom_vline(xintercept=0, lty='dashed', color='grey') +
+  xlim(c(-6,6)) +
+  theme_classic()
+grid.arrange(d1,d2,d3,nrow=2, top = 'Loop LFC vs. Gene LFC')
+```
+
+```{r}
+d <- new_sig_loops %>%
+  filter(grepl('P',type))
+d <- rbind(d %>% dplyr::select(chr1, s1, e1), d %>% dplyr::select(chr2, s2, e2), use.names=F) 
+colnames(d) <- c('chrom','start','end')
+ovl <- findOverlaps(makeGRangesFromDataFrame(d), gencode)
+genes_new_sig <- unique(gencode$gene_name[subjectHits(ovl)])
+
+d <- not_sig_loops %>%
+  filter(grepl('P',type))
+d <- rbind(d %>% dplyr::select(chr1, s1, e1), d %>% dplyr::select(chr2, s2, e2), use.names=F) 
+colnames(d) <- c('chrom','start','end')
+ovl <- findOverlaps(makeGRangesFromDataFrame(d), gencode)
+genes_not_sig <- unique(gencode$gene_name[subjectHits(ovl)])
+```
+
+
+
+
+
+
+
+
+
+

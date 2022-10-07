@@ -1,0 +1,92 @@
+---
+output: html_document
+---
+
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(data.table)
+library(ggthemes)
+library(rtracklayer)
+library(RColorBrewer)
+MIN_PET=3
+options(scipen=999)
+```
+
+```{r}
+myfiles <- list.files(pattern = 'gm12878_results_chr.*rds')
+loops <- NULL
+before <- NULL
+after <- NULL
+for (f in myfiles) {
+  d <- readRDS(f)
+  if (is.null(loops)) {
+    loops <- d@loops
+  } else {
+    loops <- rbind(loops, d@loops)
+  }
+  if (is.null(before)) {
+    before <- d@results$before
+  } else {
+    before <- rbind(before, d@results$before)
+  }
+  if (is.null(after)) {
+    after <- d@results$after
+  } else {
+    after <- rbind(after, d@results$after)
+  }
+}
+loops$before <- before[,1]
+loops$after <- after[,1]
+```
+
+
+```{r}
+chip <- fread('/rafalab/lzou/hichip_gm12878/unique/CTCF.bed', header=F, col.names = c('chrom','start','end','idk1','idk2','idk3','idk4','idk5','idk6','idk7')) %>% arrange(chrom, start)
+ovl <- data.frame(findOverlaps(makeGRangesFromDataFrame(loops %>% dplyr::select(chr1, s1, e1) %>% dplyr::rename(chrom = chr1, start = s1, end = e1)), makeGRangesFromDataFrame(chip)))
+loops$chip1 <- 0
+loops$chip1[unique(ovl$queryHits)] <- 1
+ovl <- data.frame(findOverlaps(makeGRangesFromDataFrame(loops %>% dplyr::select(chr2, s2, e2) %>% dplyr::rename(chrom = chr2, start = s2, end = e2)), makeGRangesFromDataFrame(chip)))
+loops$chip2 <- 0
+loops$chip2[unique(ovl$queryHits)] <- 1
+```
+
+
+```{r}
+loops %>% 
+  ggplot(aes(x = type, y = after-before)) +
+  geom_boxplot(outlier.shape=NA) +
+  theme_classic() +
+  ylim(c(-25,25))
+```
+
+
+
+```{r}
+loops %>%
+  mutate(chip = case_when(
+    chip1+chip2 == 0 ~ '0:0',
+    chip1+chip2 == 1 ~ '0:1',
+    chip1+chip2 == 2 ~ '1:1'
+  )) %>%
+  mutate(chip = factor(chip)) %>%
+  mutate(diff = after-before) %>%
+  ggplot(aes(x = chip, y = log2(diff+1))) +
+  geom_boxplot() +
+  theme_classic() 
+```
+
+
+```{r}
+# determine CTCF motif orientation 
+# file from https://bcm.app.box.com/v/juicerawsmirror/file/97212490795
+
+motifs <- fread('/rafalab/lzou/hichip_gm12878/hg19.motifs.txt', col.names = c('pattern_name', 'seqnames', 'start', 'stop', 'strand', 'score', 'pval', 'qval', 'matched_sequence'))
+motifs$seqnames<- paste0('chr',motifs$seqnames)
+mgr <- makeGRangesFromDataFrame(motifs[,2:5], keep.extra.columns=T)
+```
+
+
+

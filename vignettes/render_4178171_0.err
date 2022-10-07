@@ -1,0 +1,10 @@
+
+
+processing file: loop_strength_gm12878_cohesin.Rmd
+Quitting from lines 17-26 (loop_strength_gm12878_cohesin.Rmd) 
+Error in library(strawr) : there is no package called 'strawr'
+Calls: <Anonymous> ... withVisible -> eval_with_user_handlers -> eval -> eval -> library
+In addition: Warning message:
+In png(..., res = dpi, units = "in") :
+  unable to open connection to X11 display ''
+Execution halted

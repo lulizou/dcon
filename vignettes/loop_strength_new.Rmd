@@ -3,7 +3,7 @@ title: "HiChIP loop strengthening"
 output: html_document
 params:
   chrom: 'chr22'
-  chunk: 1
+  chunk: 3
 ---
 
 
@@ -19,6 +19,8 @@ library(data.table)
 library(Matrix)
 library(dplyr)
 library(dcon)
+library(GenomicRanges)
+
 
 current_chrom <- params$chrom
 ```
@@ -26,6 +28,9 @@ current_chrom <- params$chrom
 
 ```{r load-data}
 # Load hichip matrices and coordinates
+
+
+# example of hic_pro:
 mychroms <- c(paste0('chr',seq(1,22)),'chrX')
 coords <- dcon:::load_coords('/rafalab/lzou/hichip_mnase/Deep_HC_YET_17_2.5kb_MatrixHiCPro_abs.bed')
 chrom_starts <- coords %>% as.data.frame() %>% group_by(seqnames) %>% dplyr::slice(1)
@@ -61,18 +66,19 @@ lps141_loops2$e2 <- floor(lps141_loops2$e2/RESOLUTION)*RESOLUTION
 f1 <- lps141_loops1 %>%
   filter(pet>=MIN_PET) %>%
   as.data.frame()
-f1$bin1 <- left_join(f1[c('chr1','s1','e1')] %>% dplyr::rename(seqnames=chr1, start=s1, end=e1),as.data.frame(coords) %>% select(seqnames, start, end, id), by=c('seqnames','start')) %>% pull(id)
-f1$bin2 <- left_join(f1[c('chr2','s2','e2')] %>% dplyr::rename(seqnames=chr2, start=s2, end=e2),as.data.frame(coords) %>% select(seqnames, start, end, id), by=c('seqnames','start')) %>% pull(id)
+f1$bin1 <- left_join(f1[c('chr1','s1','e1')] %>% dplyr::rename(seqnames=chr1, start=s1, end=e1),as.data.frame(coords) %>% dplyr::select(seqnames, start, end, id), by=c('seqnames','start')) %>% pull(id)
+f1$bin2 <- left_join(f1[c('chr2','s2','e2')] %>% dplyr::rename(seqnames=chr2, start=s2, end=e2),as.data.frame(coords) %>% dplyr::select(seqnames, start, end, id), by=c('seqnames','start')) %>% pull(id)
 f1$bin_pair <- paste0(f1$bin1,',',f1$bin2)
 f2 <- lps141_loops2 %>%
   filter(pet>=MIN_PET) %>%
   as.data.frame()
-f2$bin1 <- left_join(f2[c('chr1','s1','e1')] %>% dplyr::rename(seqnames=chr1, start=s1, end=e1),as.data.frame(coords) %>% select(seqnames, start, end, id), by=c('seqnames','start')) %>% pull(id)
-f2$bin2 <- left_join(f2[c('chr2','s2','e2')] %>% dplyr::rename(seqnames=chr2, start=s2, end=e2),as.data.frame(coords) %>% select(seqnames, start, end, id), by=c('seqnames','start')) %>% pull(id)
+f2$bin1 <- left_join(f2[c('chr1','s1','e1')] %>% dplyr::rename(seqnames=chr1, start=s1, end=e1),as.data.frame(coords) %>% dplyr::select(seqnames, start, end, id), by=c('seqnames','start')) %>% pull(id)
+f2$bin2 <- left_join(f2[c('chr2','s2','e2')] %>% dplyr::rename(seqnames=chr2, start=s2, end=e2),as.data.frame(coords) %>% dplyr::select(seqnames, start, end, id), by=c('seqnames','start')) %>% pull(id)
 f2$bin_pair <- paste0(f2$bin1,',',f2$bin2)
-f2 <- f2 %>% filter(bin_pair%in%f1$bin_pair) %>% select('chr1','s1','e1','chr2','s2','e2','bin1','bin2','pet') %>% mutate(label = 'lps141')
+f2 <- f2 %>% filter(bin_pair%in%f1$bin_pair) %>% dplyr::select('chr1','s1','e1','chr2','s2','e2','bin1','bin2','pet') %>% mutate(label = 'lps141')
 
-loops <- loops %>% select('chr1','s1','e1','chr2','s2','e2','bin1','bin2','cc') %>% rename(pet=cc) %>% mutate(label='k562') %>% bind_rows(f2)
+loops <- loops %>% dplyr::select('chr1','s1','e1','chr2','s2','e2','bin1','bin2','cc') %>% dplyr::rename(pet=cc) %>% mutate(label='k562') %>% bind_rows(f2)
+loops <- loops %>% filter(pet>=MIN_PET)
 loops <- loops %>% filter(chr1==current_chrom)
 
 # Load in HiC matrix
@@ -83,14 +89,15 @@ coords <- coords[seqnames(coords)==current_chrom,]
 ```
 
 ```{r make-dcon-object}
-startidx <- ((params$chunk-1)*1000)+1
-endidx <- params$chunk*1000
+chunksize <- 2500
+startidx <- ((params$chunk-1)*chunksize)+1
+endidx <- params$chunk*chunksize
 if (endidx > nrow(loops)) {
   endidx <- nrow(loops)
 }
 myDcon <- Dcon(mat = list(k562_rep1 = k562_rep1, k562_rep2 = k562_rep2, lps853_rep1 = lps853_rep1, lps853_rep2 = lps853_rep2, lps141_rep1 = lps141_rep1, lps141_rep2 = lps141_rep2),
                coords = coords,
-               loops = loops %>% slice(startidx:endidx),
+               loops = loops %>% dplyr::slice(startidx:endidx),
                hic = hic)
 myDcon
 ```
@@ -98,11 +105,12 @@ myDcon
 
 
 ```{r}
-myDconvolved <- dcon::deconvolve(myDcon)
+myDconvolved <- dcon::deconvolve(myDcon, gamma=0.8)
 ```
 
 
+
 ```{r}
-saveRDS(myDconvolved@results, file=paste0('dcon_results_',current_chrom,'_chunk',params$chunk,'.rds'))
+saveRDS(myDconvolved@results, file=paste0('dcon_results_gamma_0.8_',current_chrom,'_chunk',params$chunk,'.rds'))
 ```
 

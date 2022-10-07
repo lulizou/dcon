@@ -785,6 +785,7 @@ data.frame(K562_1 = results$rep1_before, K562_2 = results$rep2_before,
   theme_classic()
 ```
 
+## TODO: LOG AND RMSE; CORRELATION WITH GENE EXPRESSION
 
 # Compare on LPS141 loops
 

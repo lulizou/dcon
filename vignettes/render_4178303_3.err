@@ -1,0 +1,11 @@
+
+
+processing file: loop_strength_gm12878_cohesin.Rmd
+output file: loop_strength_gm12878_cohesin.knit.md
+
+pandoc: loop_strength_gm12878_cohesin.knit.md: openFile: does not exist (No such file or directory)
+Error: pandoc document conversion failed with error 1
+In addition: Warning message:
+In png(..., res = dpi, units = "in") :
+  unable to open connection to X11 display ''
+Execution halted

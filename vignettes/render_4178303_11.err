@@ -1,0 +1,10 @@
+
+
+processing file: loop_strength_gm12878_cohesin.Rmd
+output file: loop_strength_gm12878_cohesin.knit.md
+
+
+Output created: loop_strength_gm12878_cohesin.html
+Warning message:
+In png(..., res = dpi, units = "in") :
+  unable to open connection to X11 display ''

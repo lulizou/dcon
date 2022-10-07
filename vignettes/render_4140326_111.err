@@ -1,0 +1,10 @@
+
+
+processing file: loop_strength_lps_loops.Rmd
+Quitting from lines 30-85 (loop_strength_lps_loops.Rmd) 
+Error in open.connection(file) : cannot open the connection
+Calls: <Anonymous> ... eval_with_user_handlers -> eval -> eval -> readMM -> open -> open.connection
+In addition: Warning message:
+In png(..., res = dpi, units = "in") :
+  unable to open connection to X11 display ''
+Execution halted

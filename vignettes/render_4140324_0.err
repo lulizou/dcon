@@ -1,0 +1,10 @@
+
+
+processing file: loop_strength_lps_loops.Rmd
+Quitting from lines 18-26 (loop_strength_lps_loops.Rmd) 
+Error: package or namespace load failed for 'dplyr' in loadNamespace(j <- i[[1L]], c(lib.loc, .libPaths()), versionCheck = vI[[j]]):
+ namespace 'vctrs' 0.4.0 is being loaded, but >= 0.4.1 is required
+In addition: Warning message:
+In png(..., res = dpi, units = "in") :
+  unable to open connection to X11 display ''
+Execution halted

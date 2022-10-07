@@ -1,0 +1,112 @@
+---
+title: "HiChIP loop strengthening"
+output: html_document
+params:
+  chrom: 'chr16'
+  chunk: 2
+---
+
+
+This vignette demonstrates how to use deconvolution to perform HiChIP
+loop strengthening. The input is HiChIP sparse matrices, loop anchors,
+and HiC. The output is the before-deconvolution count and the 
+post-deconvolution pseudocount PETs for each input loop.
+
+
+
+```{r load-libraries}
+library(data.table)
+library(Matrix)
+library(dplyr)
+library(dcon)
+library(GenomicRanges)
+
+
+current_chrom <- params$chrom
+```
+
+
+```{r load-data}
+# Load hichip matrices and coordinates
+mychroms <- c(paste0('chr',seq(1,22)),'chrX')
+coords <- dcon:::load_coords('/rafalab/lzou/hichip_mnase/Deep_HC_YET_17_2.5kb_MatrixHiCPro_abs.bed')
+chrom_starts <- coords %>% as.data.frame() %>% group_by(seqnames) %>% dplyr::slice(1)
+k562_rep1 <- dcon:::load_hichip('/rafalab/lzou/hichip_mnase/Deep_HC_YET_17_2.5kb_MatrixHiCPro.matrix', coords=coords)
+k562_rep2 <- dcon:::load_hichip('/rafalab/lzou/hichip_mnase/Deep_HC_YET_18_2.5kb_MatrixHiCPro.matrix', coords=coords)
+lps853_rep1 <- dcon:::load_hichip('/rafalab/lzou/hichip_lps/LPS853_1_allValidPairs_2500.matrix', coords=coords)
+lps853_rep2 <- dcon:::load_hichip('/rafalab/lzou/hichip_lps/LPS853_2_allValidPairs_2500.matrix', coords=coords)
+lps141_rep1 <- dcon:::load_hichip('/rafalab/lzou/hichip_lps/LPS141_1_allValidPairs_2500.matrix', coords=coords)
+lps141_rep2 <- dcon:::load_hichip('/rafalab/lzou/hichip_lps/LPS141_2_allValidPairs_2500.matrix', coords=coords)
+
+# add in LPS loops 
+RESOLUTION=2500
+MIN_PET=1
+lps853_loops1 <- bind_rows(fread('/rafalab/lzou/hichip_lps/loops/LPS853_1_E_P_loops.bedpe'), fread('/rafalab/lzou/hichip_lps/loops/LPS853_1_P_P_loops.bedpe'), fread('/rafalab/lzou/hichip_lps/loops/LPS853_1_E_E_loops.bedpe'))
+lps853_loops2 <- bind_rows(fread('/rafalab/lzou/hichip_lps/loops/LPS853_2_E_P_loops.bedpe'), fread('/rafalab/lzou/hichip_lps/loops/LPS853_2_P_P_loops.bedpe'), fread('/rafalab/lzou/hichip_lps/loops/LPS853_2_E_E_loops.bedpe'))
+
+colnames(lps853_loops1) <- colnames(lps853_loops2) <- c('chr1', 's1', 'e1', 'chr2', 's2', 'e2', 'idk', 'pet')
+
+# TODO: FIGURE OUT WHICH BIN IT'S MOSTLY IN INSTEAD OF JUST ROUNDING THE START DOWN AND USING THAT
+
+# only keep loops appearing in both replicates
+# convert starts to 2.5kb bins
+lps853_loops1$s1 <- floor(lps853_loops1$s1/RESOLUTION)*RESOLUTION
+lps853_loops1$s2 <- floor(lps853_loops1$s2/RESOLUTION)*RESOLUTION
+lps853_loops1$e1 <- floor(lps853_loops1$e1/RESOLUTION)*RESOLUTION
+lps853_loops1$e2 <- floor(lps853_loops1$e2/RESOLUTION)*RESOLUTION
+lps853_loops2$s1 <- floor(lps853_loops2$s1/RESOLUTION)*RESOLUTION
+lps853_loops2$s2 <- floor(lps853_loops2$s2/RESOLUTION)*RESOLUTION
+lps853_loops2$e1 <- floor(lps853_loops2$e1/RESOLUTION)*RESOLUTION
+lps853_loops2$e2 <- floor(lps853_loops2$e2/RESOLUTION)*RESOLUTION
+
+f1 <- lps853_loops1 %>%
+  filter(pet>=MIN_PET) %>%
+  as.data.frame()
+f1$bin1 <- left_join(f1[c('chr1','s1','e1')] %>% dplyr::rename(seqnames=chr1, start=s1, end=e1),as.data.frame(coords) %>% dplyr::select(seqnames, start, end, id), by=c('seqnames','start')) %>% pull(id)
+f1$bin2 <- left_join(f1[c('chr2','s2','e2')] %>% dplyr::rename(seqnames=chr2, start=s2, end=e2),as.data.frame(coords) %>% dplyr::select(seqnames, start, end, id), by=c('seqnames','start')) %>% pull(id)
+f1$bin_pair <- paste0(f1$bin1,',',f1$bin2)
+f2 <- lps853_loops2 %>%
+  filter(pet>=MIN_PET) %>%
+  as.data.frame()
+f2$bin1 <- left_join(f2[c('chr1','s1','e1')] %>% dplyr::rename(seqnames=chr1, start=s1, end=e1),as.data.frame(coords) %>% dplyr::select(seqnames, start, end, id), by=c('seqnames','start')) %>% pull(id)
+f2$bin2 <- left_join(f2[c('chr2','s2','e2')] %>% dplyr::rename(seqnames=chr2, start=s2, end=e2),as.data.frame(coords) %>% dplyr::select(seqnames, start, end, id), by=c('seqnames','start')) %>% pull(id)
+f2$bin_pair <- paste0(f2$bin1,',',f2$bin2)
+f2 <- f2 %>% filter(bin_pair%in%f1$bin_pair) %>% dplyr::select('chr1','s1','e1','chr2','s2','e2','bin1','bin2','pet') %>% mutate(label = 'lps853')
+
+loops <- f2
+loops <- loops %>% filter(pet>=MIN_PET)
+loops <- loops %>% filter(chr1==current_chrom)
+
+# Load in HiC matrix
+cs <- chrom_starts$id[which(chrom_starts$seqnames==current_chrom)]
+hic <- readMM(paste0('/rafalab/lzou/hichip_mnase/K562_HiC_',current_chrom,'_2500.mtx'))
+
+coords <- coords[seqnames(coords)==current_chrom,]
+```
+
+```{r make-dcon-object}
+chunksize <- 2500
+startidx <- ((params$chunk-1)*chunksize)+1
+endidx <- params$chunk*chunksize
+if (endidx > nrow(loops)) {
+  endidx <- nrow(loops)
+}
+myDcon <- Dcon(mat = list(k562_rep1 = k562_rep1, k562_rep2 = k562_rep2, lps853_rep1 = lps853_rep1, lps853_rep2 = lps853_rep2, lps141_rep1 = lps141_rep1, lps141_rep2 = lps141_rep2),
+               coords = coords,
+               loops = loops %>% dplyr::slice(startidx:endidx),
+               hic = hic)
+myDcon
+```
+
+
+
+```{r}
+myDconvolved <- dcon::deconvolve(myDcon, gamma=0.5)
+```
+
+
+
+```{r}
+saveRDS(myDconvolved@results, file=paste0('dcon_results_lps853_gamma_0.5_',current_chrom,'_chunk',params$chunk,'.rds'))
+```
+

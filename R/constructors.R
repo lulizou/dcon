@@ -13,7 +13,7 @@ Dcon <- setClass(
     mat = 'list',
     coords = 'GRanges',
     loops = 'data.frame',
-    hic = 'dsTMatrix',
+    hic = 'list',
     is_deconvolved = 'logical',
     results = 'list'
   ),
@@ -22,18 +22,19 @@ Dcon <- setClass(
     mat = list(),
     coords = GRanges(),
     loops = data.frame(),
-    hic = new('dsTMatrix'),
+    hic = list(),
     is_deconvolved = F,
     results = list()
   ),
   
   validity = function(object) {
-    if (is.null(object@coords$id)) {
-      return('coords must have 1 metadata column for the id')
-    }
+    # if (is.null(object@coords$id)) {
+    #   return('coords must have 1 metadata column for the id')
+    # }
     return(TRUE)
   }
 )
+
 
 setGeneric(
   name = 'deconvolve',

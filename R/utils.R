@@ -1,5 +1,19 @@
 # accessory functions for importing data
 
+
+#' Get pairwise L1 and L2 norm differences from a list of matrices
+#' and the indices at those matrices to calculate the differences on
+get_pairwise_diff <- function(matrix_list, idx1, idx2, label='') {
+  diffs <- data.frame(t(combn(names(matrix_list),2)))
+  colnames(diffs) <- c('m1','m2')
+  diffs$label <- label
+  diffs$diff <- NA
+  for (i in 1:nrow(diffs)) {
+    diffs$diff[i] <- sum(abs(matrix_list[[diffs$m1[i]]][idx1, idx2]-matrix_list[[diffs$m2[i]]][idx1,idx2]))
+  }
+  return(diffs)
+}
+
 #' Load in anchors
 #' If there are multiple anchor files, can decide whether to use all unique
 #' entries or only take ones in both (intersection). Default is to take the
@@ -28,7 +42,7 @@ load_anchors <- function(..., coords, type='fithichip', use='intersection') {
     d$bin2 <- left_join(d[,c('chr2','s2','e2')] %>% 
                           dplyr::rename(seqnames=chr2, start=s2, end=e2),
                         as.data.frame(coords) %>% 
-                          select(seqnames, start, end, id),
+                          dplyr::select(seqnames, start, end, id),
                         by = c("seqnames", "start", "end")) %>% 
       pull(id)
     d$bin_pair <- paste0(d$bin1,',',d$bin2)
@@ -51,7 +65,12 @@ load_anchors <- function(..., coords, type='fithichip', use='intersection') {
 #' Load in the hic-pro coordinates file
 #' aka the _abs.bed file with the correct resolution bins
 load_coords <- function(filename, type='hic-pro') {
-  coords <- fread(filename, col.names = c('chrom','start','end','id'))
+  if (type == 'hic-pro') {
+    coords <- fread(filename, col.names = c('chrom','start','end','id'))
+  } else if (type == 'windows') {
+    coords <- fread(filename, col.names=c('chrom','start','end'))
+    coords$id <- seq(1,nrow(coords))
+  }
   coords <- makeGRangesFromDataFrame(coords, keep.extra.columns = T)
   return(coords)
 }

@@ -1,0 +1,98 @@
+---
+title: "HiChIP loop strengthening GM12878 cohesin"
+output: html_document
+params:
+  chrom: 'chr1'
+---
+
+
+This vignette demonstrates how to use deconvolution to perform HiChIP
+loop strengthening. The input is HiChIP sparse matrices, loop anchors,
+and HiC. The output is the before-deconvolution count and the 
+post-deconvolution pseudocount PETs for each input loop.
+
+
+
+```{r load-libraries}
+library(data.table)
+library(Matrix)
+library(dplyr)
+library(dcon)
+library(GenomicRanges)
+library(strawr)
+
+
+current_chrom <- params$chrom
+RESOLUTION <- 5000
+```
+
+
+```{r load-data}
+# Load hichip matrices and coordinates
+chip.df <- strawr::straw("NONE", "/rafalab/lzou/hichip_gm12878/GM_HiChIP_cohesin_r1.hic", gsub('chr','',current_chrom), gsub('chr','',current_chrom), "BP", RESOLUTION)
+chip.df$x <- chip.df$x/RESOLUTION
+chip.df$y <- chip.df$y/RESOLUTION
+chip.df <- chip.df %>% filter(y-x>3)
+chip1 <- sparseMatrix(i = chip.df$x+1, j = chip.df$y+1, x = chip.df$counts)
+chip.df <- strawr::straw("NONE", "/rafalab/lzou/hichip_gm12878/GM_HiChIP_cohesin_r2.hic", gsub('chr','',current_chrom), gsub('chr','',current_chrom), "BP", RESOLUTION)
+chip.df$x <- chip.df$x/RESOLUTION
+chip.df$y <- chip.df$y/RESOLUTION
+chip.df <- chip.df %>% filter(y-x>3)
+chip2 <- sparseMatrix(i = chip.df$x+1, j = chip.df$y+1, x = chip.df$counts)
+coords <- dcon:::load_coords('/rafalab/lzou/resources/hg19.5kb.windows', type='windows')
+coords <- coords[seqnames(coords)==current_chrom,]
+coords$id <- seq(1,length(coords))
+# Load in HiC matrix
+hic <- strawr::straw("NONE", "/rafalab/lzou/hichip_gm12878/ENCFF718AWL.hic", gsub('chr','',current_chrom), gsub('chr','',current_chrom), "BP", RESOLUTION)
+hic <- sparseMatrix(i = hic$x/RESOLUTION+1, j = hic$y/RESOLUTION+1, x = hic$counts)
+# Load in loops
+loops <- fread('/rafalab/lzou/hichip_gm12878/fithichip_gm12878_cohesin_loose.csv')
+colnames(loops)[1:5] <- c('chr1','s1','e1','s2','e2')
+loops$s1 <- floor(loops$s1/RESOLUTION)*RESOLUTION
+loops$s2 <- floor(loops$s2/RESOLUTION)*RESOLUTION
+loops$e1 <- floor(loops$e1/RESOLUTION)*RESOLUTION
+loops$e2 <- floor(loops$e2/RESOLUTION)*RESOLUTION
+loops$chr2 <- current_chrom
+loops <- loops %>% filter(chr1==current_chrom)
+loops$type <- 'real'
+# add in random pairwise combinations that are not in the data i.e. 'fake' loops
+set.seed(137)
+fake_loops <- data.frame(
+  chr1 = current_chrom,
+  s1 = sample(seq(min(loops$s1),max(loops$s1),by=RESOLUTION), 1e4, replace=T),
+  chr2 = current_chrom,
+  s2 = sample(seq(min(loops$s2),max(loops$s2),by=RESOLUTION), 1e4, replace=T)
+) %>%
+  filter(s1<=s2) %>%
+  mutate(e1=s1+RESOLUTION, e2=s2+RESOLUTION) %>%
+  dplyr::select(chr1, s1, e1, chr2, s2, e2) %>%
+  mutate(pval = 1, type = 'fake') %>%
+  distinct()
+fake_loops <- fake_loops[!(paste0(fake_loops$s1,',',fake_loops$s2) %in% paste0(loops$s1,',',loops$s2)),]
+loops <- bind_rows(loops, fake_loops)
+loops <- loops %>% arrange(s1,s2)
+loops$bin1 <- loops[,1:3] %>% dplyr::rename(seqnames=chr1, start=s1, end=e1) %>% left_join(as.data.frame(coords)) %>% pull(id)
+loops$bin2 <- loops[,c(1,4,5)] %>% dplyr::rename(seqnames=chr1, start=s2, end=e2) %>% left_join(as.data.frame(coords)) %>% pull(id)
+loops <- loops %>% filter(bin2-bin1>3)
+```
+
+```{r make-dcon-object}
+myDcon <- Dcon(mat = list(gm12878_1=chip1, gm12878_2=chip2),
+               coords = coords,
+               loops = loops,
+               hic = list(hic))
+myDcon
+```
+
+
+
+```{r}
+myDconvolved <- dcon::deconvolve(myDcon, gamma=0.5)
+```
+
+
+
+```{r}
+saveRDS(myDconvolved, file=paste0('gm12878_5000_results_',current_chrom,'.rds'))
+```
+

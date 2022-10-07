@@ -27,53 +27,131 @@
 #' @export
 setMethod(f = 'deconvolve',
           signature = 'Dcon',
-          def = function(object, df=21, gamma=0.5, pad=10, add_center=1) {
-            center_idx <- median(seq(1,2*pad+1))
-            center_idx <- seq(center_idx-add_center,center_idx+add_center)
+          def = function(object, df=NULL, gamma=0.5, pad=10, save_mat=F) {
+            if (is.null(df)) {
+              df <- pad*2+1
+            }
+            coords <- object@coords
             loops <- object@loops
+            hic <- object@hic
+            if (length(hic)==1) {
+              hic <- hic[[1]]
+            }
             hichip_mats <- object@mat
-            after <- matrix(data=NA, nrow = nrow(loops), ncol = length(hichip_mats))
-            colnames(after) <- names(hichip_mats)
-            before <- after
-            pb <- txtProgressBar(min = 1, max = nrow(loops), initial = 1, style=3) 
-            chrom_start <- object@coords$id[1]
-            for (i in 1:nrow(loops)) {
-              setTxtProgressBar(pb,i)
-              a1 <- loops$bin1[i]
-              a2 <- loops$bin2[i]
-              a1_idx <- seq(a1-pad,a1+pad)
-              a2_idx <- seq(a2-pad,a2+pad)
-              hic1_idx <- a1_idx-cs+1
-              hic2_idx <- a2_idx-cs+1
-              hic1 <- normalize_hic(hic[hic1_idx,hic1_idx], gamma=gamma)
-              hic2 <- normalize_hic(hic[hic2_idx,hic2_idx], gamma=gamma)
-              for (j in 1:length(hichip_mats)) {
-                m <- hichip_mats[[j]][a1_idx,a2_idx]
-                before[i,j] <- sum(m[center_idx,center_idx])
-                if (nnzero(m)> 0) {
-                  r1 <- rowSums(m)
-                  r2 <- colSums(m)
-                  B <- construct_basis(1:length(r1), df=df)
-                  fit_r1 <- try(fit_decon(r1, hic1))
-                  fit_r2 <- try(fit_decon(r2, hic2))
-                  if (is(fit_r1, 'try-error') | is(fit_r2, 'try-error')) {
-                    next
-                  }
-                  a1 <- fit_r1$a
-                  a2 <- fit_r2$a
-                  ff1 <- (B%*%a1)-log(sum(exp(B%*%a1)))
-                  ff2 <- (B%*%a2)-log(sum(exp(B%*%a2)))
-                  res <- exp(matrix(data = rep(ff1, df), nrow=df, ncol=df) + 
-                               t(matrix(data = rep(ff2, df), nrow = df, ncol = df)))*sum(m)
-                  after[i,j] <- sum(res[center_idx,center_idx])
-                  res[res<1e-2] <- 0
-                  # hichip_mats[[j]][a1_idx,a2_idx] <- res
+            if (is.null(names(hichip_mats))) {
+              stop('hichip matrices must be input as a named list')
+            }
+            results <- before <- after <- NULL
+            if (save_mat) {
+              new_mat <- list(before = list(), after = list())
+            }
+            if (nrow(loops)==0) {
+              message('No loops found - assuming that each matrix in mat is 
+                      a loop window')
+              if (length(hichip_mats)>1) {
+                pb <- txtProgressBar(min = 1, max = length(hichip_mats),
+                                     initial = 1, style = 3)
+              }
+              for (i in 1:length(hichip_mats)) {
+                if (i>1) {
+                  setTxtProgressBar(pb,i)
+                }
+                m <- hichip_mats[[i]]
+                r1 <- rowSums(m)
+                r2 <- colSums(m)
+                hic1 <- hic[[1]]
+                hic2 <- hic[[2]]
+                B <- construct_basis(1:length(r1), df=df)
+                fit_r1 <- try(fit_decon(r1, hic1), silent=T)
+                fit_r2 <- try(fit_decon(r2, hic2), silent=T)
+                if (is(fit_r1, 'try-error') | is(fit_r2, 'try-error')) {
+                  next
+                }
+                a1 <- fit_r1$a
+                a2 <- fit_r2$a
+                ff1 <- (B%*%a1)-log(sum(exp(B%*%a1)))
+                ff2 <- (B%*%a2)-log(sum(exp(B%*%a2)))
+                res <- exp(matrix(data = rep(ff1, df), nrow=df, ncol=df) + 
+                             t(matrix(data = rep(ff2, df), nrow = df, ncol = df)))*sum(m)
+                res[res<1e-2] <- 0
+                if (save_mat) {
+                  new_mat$before[[names(hichip_mats)[i]]] <- m
+                  new_mat$after[[names(hichip_mats)[i]]] <- res
                 }
               }
+            } else {
+              message('Found loops - assuming that each matrix in mat is 
+                      a hichip matrix')
+              before <- after <- matrix(nrow = nrow(loops), ncol = length(hichip_mats))
+              colnames(before) <- colnames(after) <- names(hichip_mats)
+              pb <- txtProgressBar(min = 1, max = nrow(loops), initial = 1, style=3) 
+              chrom_start <- object@coords$id[1]
+              for (i in 1:nrow(loops)) {
+                setTxtProgressBar(pb,i)
+                a1 <- loops$bin1[i]
+                a2 <- loops$bin2[i]
+                a1_idx <- seq(a1-pad,a1+pad)
+                a2_idx <- seq(a2-pad,a2+pad)
+                hic1_idx <- a1_idx-chrom_start+1
+                hic2_idx <- a2_idx-chrom_start+1
+                if (any(c(hic1_idx, hic2_idx)>min(dim(hic))) | any(c(hic1_idx,hic2_idx)<0)) {
+                  next
+                }
+                hic1 <- normalize_hic(hic[hic1_idx,hic1_idx], gamma=gamma)
+                hic2 <- normalize_hic(hic[hic2_idx,hic2_idx], gamma=gamma)
+                myres <- list()
+                for (j in 1:length(hichip_mats)) {
+                  if (any(c(a1_idx,a2_idx)>min(dim(hichip_mats[[j]])))| any(c(a1_idx,a2_idx)<0)) {
+                    next
+                  }
+                  m <- hichip_mats[[j]][a1_idx,a2_idx]
+                  before[i,j] <- sum(m[pad:(pad+2),pad:(pad+2)])
+                  if (nnzero(m)> 0) {
+                    r1 <- rowSums(m)
+                    r2 <- colSums(m)
+                    B <- construct_basis(1:length(r1), df=df)
+                    fit_r1 <- try(fit_decon(r1, hic1), silent=T)
+                    fit_r2 <- try(fit_decon(r2, hic2), silent=T)
+                    if (is(fit_r1, 'try-error') | is(fit_r2, 'try-error')) {
+                      next
+                    }
+                    a1 <- fit_r1$a
+                    a2 <- fit_r2$a
+                    ff1 <- (B%*%a1)-log(sum(exp(B%*%a1)))
+                    ff2 <- (B%*%a2)-log(sum(exp(B%*%a2)))
+                    res <- exp(matrix(data = rep(ff1, df), nrow=df, ncol=df) + 
+                                 t(matrix(data = rep(ff2, df), nrow = df, ncol = df)))*sum(m)
+                    res[res<1e-2] <- 0
+                    myres[[names(hichip_mats)[j]]] <- res
+                    after[i,j] <- sum(res[pad:(pad+2),pad:(pad+2)])
+                    if (save_mat) {
+                      new_mat$before[[paste0('loop_',i,'_',names(hichip_mats)[j])]] <- m
+                      new_mat$after[[paste0('loop_',i,'_',names(hichip_mats)[j])]] <- res
+                    }
+                  }
+                }
+                if (length(myres)>2) {
+                  diffs <- as.data.frame(rbind(
+                    get_pairwise_diff(hichip_mats, a1_idx, a2_idx, label='before'),
+                    get_pairwise_diff(myres, 1:(pad*2+1), 1:(pad*2+1), label='after')
+                  ))
+                  diffs$loop <- i
+                  if (is.null(results)) {
+                    results <- diffs
+                  } else {
+                    results <- rbind(results, diffs)
+                  }
+                }
+              }
+              close(pb)
+              object@loops <- loops
             }
-            close(pb)
-            object@mat <- hichip_mats
-            object@results <- list(before=before, after=after)
+            if (save_mat) {
+              object@mat <- new_mat
+            } else {
+              object@mat <- list()
+            }
+            object@results <- list(df = results, before = before, after = after)
             object@is_deconvolved <- TRUE
             return(object)
           })
