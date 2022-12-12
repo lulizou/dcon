@@ -1,0 +1,511 @@
+---
+output: html_document
+---
+
+
+```{r load-libraries-and-data}
+library(dplyr)
+library(ggplot2)
+library(reshape2)
+library(tidyr)
+library(data.table)
+library(Matrix)
+library(RColorBrewer)
+library(dcon)
+library(rtracklayer)
+library(InteractionSet)
+load('shiny_data_v2.RData')
+OE_mat <- OE_mat + t(OE_mat) - diag(diag(OE_mat))
+l1md_chr18 <- l1md_chr18 + t(l1md_chr18) - diag(diag(l1md_chr18))
+b1_annot <- fread('/rafalab/lzou/resources/mm10.100kb.windows.B1.coverage',
+                  col.names = c('chrom','start','end','nfeatures', 'nbp',
+                                'tot', 'frac')) |>
+  filter(chrom=='chr18')
+l1_annot <- fread('/rafalab/lzou/resources/mm10.100kb.windows.L1.coverage',
+                  col.names = c('chrom','start','end','nfeatures', 'nbp',
+                                'tot', 'frac')) |>
+  filter(chrom=='chr18')
+l1md_annot <- fread('/rafalab/lzou/resources/mm10.100kb.windows.L1Md.coverage',
+                    col.names = c('chrom','start','end','nfeatures', 'nbp',
+                                  'tot', 'frac'))|>
+  filter(chrom=='chr18')
+l1md_bed <- fread('/rafalab/lzou/resources/L1Md_mm10.rmsk.annot.bed',
+                  col.names = c('chrom','start','end','element')) |>
+  filter(chrom=='chr18') |>
+  arrange(start)
+windows <- fread('/rafalab/lzou/resources/mm10.100kb.windows', 
+                 col.names = c('chrom','start','end')) |>
+  filter(chrom=='chr18')
+
+rna_offset <- fread('/rafalab/lzou/rdsprite/total_RNA_count_windows_100000_clusters_2-100.csv') |>
+  filter(chrom=='chr18') |>
+  select(-V1)
+
+total_l1_rna <- fread('/rafalab/lzou/rdsprite/count_windows/L1,LINE|LINE,L1_RNA_count_windows_100000_clusters_2-100.csv') |>
+  filter(chrom=='chr18')
+total_l1md_rna <- fread('/rafalab/lzou/rdsprite/count_windows/L1Md_RNA_count_windows_100000_clusters_2-100.csv') |>
+  filter(chrom=='chr18')
+total_b1_rna <- fread('/rafalab/lzou/rdsprite/count_windows/Alu,SINE|SINE,Alu_RNA_count_windows_100000_clusters_2-100.csv') |>
+  filter(chrom=='chr18')
+```
+
+
+```{r}
+l1md_annot$total_rna <- rna_offset$count
+l1md_annot$b1_frac <- b1_annot$frac
+l1md_annot$l1_frac <- l1_annot$frac
+l1md_annot$l1md_rna <- total_l1md_rna$count
+l1md_annot$b1_rna <- total_b1_rna$count
+l1md_annot$l1_rna <- total_l1_rna$count
+l1md_annot$avg_oe <- rowMeans(OE_mat)
+```
+
+```{r}
+l1md_annot %>%
+  ggplot(aes(x = b1_frac, y = l1_frac)) +
+  geom_point(aes(color = total_rna)) +
+  scale_color_viridis() +
+  theme_classic()
+```
+
+
+```{r}
+l1md_annot %>%
+  ggplot(aes(x = b1_frac, y = l1_frac)) +
+  geom_point(aes(color = l1md_rna)) +
+  scale_color_viridis() +
+  theme_classic()
+```
+
+
+
+
+```{r}
+l1md_annot %>%
+  ggplot(aes(x = b1_frac, y = l1_frac)) +
+  geom_point(aes(color = l1md_rna/total_rna)) +
+  scale_color_viridis() +
+  theme_classic()
+```
+
+
+
+
+```{r}
+l1md_annot %>%
+  ggplot(aes(x = b1_frac, y = frac)) +
+  geom_point(aes(color = l1md_rna/total_rna)) +
+  scale_color_viridis() +
+  theme_classic() +
+  ylab('L1Md frac')
+```
+
+
+```{r}
+l1md_annot %>%
+  ggplot(aes(x = b1_frac, y = l1_frac)) +
+  geom_point(aes(color = b1_rna)) +
+  scale_color_viridis() +
+  theme_classic()
+```
+
+
+```{r}
+l1md_annot %>%
+  ggplot(aes(x = b1_frac, y = b1_rna)) +
+  geom_point() +
+  theme_classic()
+```
+
+```{r}
+l1md_annot %>%
+  ggplot(aes(x = b1_frac, y = l1md_rna)) +
+  geom_point() +
+  theme_classic()
+```
+
+
+
+```{r}
+l1md_annot %>%
+  ggplot(aes(x = frac, y = l1md_rna)) +
+  geom_point() +
+  theme_classic()
+```
+
+
+```{r}
+l1md_annot %>%
+  ggplot(aes(x = frac, y = l1md_rna)) +
+  geom_point() +
+  theme_classic()
+```
+
+
+```{r}
+l1md_annot %>%
+  ggplot(aes(x = frac, y = l1md_rna/total_rna)) +
+  geom_point() +
+  theme_classic()
+```
+
+
+```{r}
+l1md_annot %>%
+  ggplot(aes(x = l1_frac, y = l1md_rna/total_rna)) +
+  geom_point() +
+  theme_classic()
+```
+
+
+
+```{r}
+l1md_annot %>%
+  ggplot(aes(x = b1_frac, y = b1_rna)) +
+  geom_point(aes(color = avg_oe)) +
+  theme_classic() +
+  scale_color_gradient2(low='blue',high='red',mid='grey88',midpoint=1)
+```
+
+
+
+```{r}
+l1md_annot %>%
+  ggplot(aes(x = l1_frac, y = l1md_rna/total_rna)) +
+  geom_point(aes(color = avg_oe)) +
+  theme_classic() +
+  scale_color_gradient2(low='blue',high='red',mid='grey88',midpoint=1)
+```
+
+
+```{r}
+# look at the top 10 l1md fraction bins
+top_10 <- l1md_annot %>%
+  mutate(idx = 1:908) %>%
+  arrange(desc(frac)) %>%
+  slice(1:10) %>%
+  pull(idx)
+```
+
+
+```{r}
+cbind(l1md_annot, as.data.frame(as.matrix(OE_mat[,top_10]))) %>%
+  pivot_longer(cols = starts_with('V'), names_to = 'top_idx', values_to = 'OE') %>%
+  ggplot(aes(x = frac, y = OE)) +
+  geom_point(aes(color = top_idx)) +
+  scale_color_tableau() +
+  theme_classic()
+```
+
+
+```{r}
+# look at the top 50 l1md RNA/total bins
+top_10 <- l1md_annot %>%
+  mutate(idx = 1:908) %>%
+  arrange(desc(l1md_rna/total_rna)) %>%
+  slice(1:50) %>%
+  pull(idx)
+cbind(l1md_annot, as.data.frame(as.matrix(OE_mat[,top_10]))) %>%
+  pivot_longer(cols = starts_with('V'), names_to = 'top_idx', values_to = 'OE') %>%
+  ggplot(aes(x = frac, y = OE)) +
+  geom_point(alpha=0.25, color='grey') +
+  geom_smooth(aes(group = top_idx),se=F,alpha=0.5,color='black',size=0.5) +
+  geom_hline(yintercept=1, lty='dashed', color='red') +
+  theme_classic()
+```
+
+```{r}
+# look at the top 50 l1md RNA/total bins
+top_10 <- l1md_annot %>%
+  mutate(idx = 1:908) %>%
+  arrange(desc(l1md_rna/total_rna)) %>%
+  slice(1:50) %>%
+  pull(idx)
+cbind(l1md_annot, as.data.frame(as.matrix(OE_mat[,top_10]))) %>%
+  pivot_longer(cols = starts_with('V'), names_to = 'top_idx', values_to = 'OE') %>%
+  ggplot(aes(x = l1md_rna, y = OE)) +
+  geom_point(alpha=0.25, color='grey') +
+  geom_smooth(aes(group = top_idx),se=F,alpha=0.5,color='black',size=0.5) +
+  geom_hline(yintercept=1, lty='dashed', color='red') +
+  theme_classic()
+```
+
+
+```{r}
+# look at the top 50 l1md RNA/total bins
+top_10 <- l1md_annot %>%
+  mutate(idx = 1:908) %>%
+  arrange(desc(l1md_rna/total_rna)) %>%
+  slice(1:50) %>%
+  pull(idx)
+cbind(l1md_annot, as.data.frame(as.matrix(OE_mat[,top_10]))) %>%
+  pivot_longer(cols = starts_with('V'), names_to = 'top_idx', values_to = 'OE') %>%
+  ggplot(aes(x = b1_rna, y = OE)) +
+  geom_point(alpha=0.25, color='grey') +
+  geom_smooth(aes(group = top_idx),se=F,alpha=0.5,color='black',size=0.5) +
+  geom_hline(yintercept=1, lty='dashed', color='red') +
+  theme_classic()
+```
+
+
+```{r}
+# look at the top 50 l1md RNA/total bins
+top_10 <- l1md_annot %>%
+  mutate(idx = 1:908) %>%
+  arrange(desc(l1md_rna/total_rna)) %>%
+  slice(1:50) %>%
+  pull(idx)
+cbind(l1md_annot, as.data.frame(as.matrix(OE_mat[,top_10]))) %>%
+  pivot_longer(cols = starts_with('V'), names_to = 'top_idx', values_to = 'OE') %>%
+  ggplot(aes(x = l1md_rna/total_rna, y = OE)) +
+  geom_point(alpha=0.25, color='grey') +
+  geom_smooth(aes(group = top_idx),se=F,alpha=0.5,color='black',size=0.5) +
+  geom_hline(yintercept=1, lty='dashed', color='red') +
+  theme_classic()
+```
+
+
+```{r}
+# look at the top 50 l1md RNA/total bins
+top_10 <- l1md_annot %>%
+  mutate(idx = 1:908) %>%
+  arrange(desc(l1md_rna/total_rna)) %>%
+  slice(1:50) %>%
+  pull(idx)
+cbind(l1md_annot, as.data.frame(as.matrix(OE_mat[,top_10]))) %>%
+  pivot_longer(cols = starts_with('V'), names_to = 'top_idx', values_to = 'OE') %>%
+  ggplot(aes(x = l1md_rna/total_rna, y = OE)) +
+  geom_point(alpha=0.25, color='grey') +
+  geom_smooth(aes(group = top_idx),se=F,alpha=0.5,color='black',size=0.5) +
+  geom_hline(yintercept=1, lty='dashed', color='red') +
+  theme_classic()
+```
+
+
+```{r}
+# look at the top 50 l1md RNA/total bins
+top_10 <- l1md_annot %>%
+  mutate(idx = 1:908) %>%
+  arrange(desc(l1_rna/total_rna)) %>%
+  slice(1:50) %>%
+  pull(idx)
+cbind(l1md_annot, as.data.frame(as.matrix(OE_mat[,top_10]))) %>%
+  pivot_longer(cols = starts_with('V'), names_to = 'top_idx', values_to = 'OE') %>%
+  ggplot(aes(x = l1_rna/total_rna, y = OE)) +
+  geom_point(alpha=0.25, color='grey') +
+  geom_smooth(aes(group = top_idx),se=F,alpha=0.5,color='black',size=0.5) +
+  geom_hline(yintercept=1, lty='dashed', color='red') +
+  theme_classic()
+```
+
+
+
+
+```{r}
+# look at the top 50 b1 RNA/total bins
+top_10 <- l1md_annot %>%
+  mutate(idx = 1:908) %>%
+  arrange(desc(b1_rna/total_rna)) %>%
+  slice(1:50) %>%
+  pull(idx)
+cbind(l1md_annot, as.data.frame(as.matrix(OE_mat[,top_10]))) %>%
+  pivot_longer(cols = starts_with('V'), names_to = 'top_idx', values_to = 'OE') %>%
+  ggplot(aes(x = b1_frac, y = OE)) +
+  geom_point(alpha=0.25, color='grey') +
+  geom_smooth(aes(group = top_idx),se=F,alpha=0.5,color='black',size=0.5) +
+  geom_hline(yintercept=1, lty='dashed', color='red') +
+  theme_classic()
+```
+
+
+
+```{r}
+# look at the top 50 b1 RNA/total bins
+top_10 <- l1md_annot %>%
+  mutate(idx = 1:908) %>%
+  arrange(desc(b1_rna/total_rna)) %>%
+  slice(1:50) %>%
+  pull(idx)
+cbind(l1md_annot, as.data.frame(as.matrix(OE_mat[,top_10]))) %>%
+  pivot_longer(cols = starts_with('V'), names_to = 'top_idx', values_to = 'OE') %>%
+  ggplot(aes(x = b1_rna, y = OE)) +
+  geom_point(alpha=0.25, color='grey') +
+  geom_smooth(aes(group = top_idx),se=F,alpha=0.5,color='black',size=0.5) +
+  geom_hline(yintercept=1, lty='dashed', color='red') +
+  theme_classic()
+```
+
+
+
+```{r}
+# look at the top 50 b1 RNA/total bins
+top_10 <- l1md_annot %>%
+  mutate(idx = 1:908) %>%
+  arrange(desc(b1_rna/total_rna)) %>%
+  slice(1:50) %>%
+  pull(idx)
+cbind(l1md_annot, as.data.frame(as.matrix(OE_mat[,top_10]))) %>%
+  pivot_longer(cols = starts_with('V'), names_to = 'top_idx', values_to = 'OE') %>%
+  ggplot(aes(x = b1_rna/total_rna, y = OE)) +
+  geom_point(alpha=0.25, color='grey') +
+  geom_smooth(aes(group = top_idx),se=F,alpha=0.5,color='black',size=0.5) +
+  geom_hline(yintercept=1, lty='dashed', color='red') +
+  theme_classic()
+```
+
+
+```{r}
+# look at the top 50 l1md RNA/total bins
+top_10 <- l1md_annot %>%
+  mutate(idx = 1:908) %>%
+  arrange(desc(l1_rna/total_rna)) %>%
+  slice(1:50) %>%
+  pull(idx)
+cbind(l1md_annot, as.data.frame(as.matrix(OE_mat[,top_10]))) %>%
+  pivot_longer(cols = starts_with('V'), names_to = 'top_idx', values_to = 'OE') %>%
+  ggplot(aes(x = l1_rna/total_rna, y = OE)) +
+  geom_point(alpha=0.25, color='grey') +
+  geom_smooth(aes(group = top_idx),se=F,alpha=0.5,color='black',size=0.5) +
+  geom_hline(yintercept=1, lty='dashed', color='red') +
+  theme_classic()
+```
+
+
+
+```{r}
+# look at the bottom 50 l1md RNA/total bins
+top_10 <- l1md_annot %>%
+  mutate(idx = 1:908) %>%
+  arrange((l1_rna/total_rna)) %>%
+  slice(1:50) %>%
+  pull(idx)
+cbind(l1md_annot, as.data.frame(as.matrix(OE_mat[,top_10]))) %>%
+  pivot_longer(cols = starts_with('V'), names_to = 'top_idx', values_to = 'OE') %>%
+  ggplot(aes(x = l1_rna/total_rna, y = OE)) +
+  geom_point(alpha=0.25, color='grey') +
+  geom_smooth(aes(group = top_idx),se=F,alpha=0.5,color='black',size=0.5) +
+  geom_hline(yintercept=1, lty='dashed', color='red') +
+  theme_classic()
+```
+
+
+
+```{r}
+# look at the top 50 l1md RNA/total bins
+top_10 <- l1md_annot %>%
+  mutate(idx = 1:908) %>%
+  arrange(desc(l1md_rna/total_rna)) %>%
+  slice(1:50) %>%
+  pull(idx)
+cbind(l1md_annot, as.data.frame(as.matrix(OE_mat[,top_10]))) %>%
+  pivot_longer(cols = starts_with('V'), names_to = 'top_idx', values_to = 'OE') %>%
+  ggplot(aes(x = l1md_rna/total_rna, y = OE)) +
+  geom_point(alpha=0.25, color='grey') +
+  geom_smooth(aes(group = top_idx),se=F,alpha=0.5,color='black',size=0.5) +
+  geom_hline(yintercept=1, lty='dashed', color='red') +
+  theme_classic()
+```
+
+
+```{r}
+# look at the top bottom l1md RNA/total bins
+bot_10 <- l1md_annot %>%
+  mutate(idx = 1:908) %>%
+  arrange((l1md_rna/total_rna)) %>%
+  slice(1:50) %>%
+  pull(idx)
+cbind(l1md_annot, as.data.frame(as.matrix(OE_mat[,bot_10]))) %>%
+  pivot_longer(cols = starts_with('V'), names_to = 'top_idx', values_to = 'OE') %>%
+  ggplot(aes(x = l1md_rna/total_rna, y = OE)) +
+  geom_point(alpha=0.25, color='grey') +
+  geom_smooth(aes(group = top_idx),se=F,alpha=0.5,color='black',size=0.5) +
+  geom_hline(yintercept=1, lty='dashed', color='red') +
+  theme_classic()
+```
+
+
+```{r}
+# deconvolve half-overlapping 2mb windows around the top 50 bins
+myidx <- data.frame(center = c(top_10, bot_10), upper = c(top_10, bot_10)+10,
+                    lower = c(top_10, bot_10)-10)
+myidx$upper[myidx$upper>908] <- 908
+# all 2mb windows 
+all2mb <- data.frame(lower = seq(1,908-21,20), upper = seq(22,908,20))
+fitted_results <- list()
+for (i in 1:nrow(myidx)) {
+  message(i)
+  fitted_results[[paste0(i)]] <- list()
+  idx1 <- myidx$lower[i]:myidx$upper[i]
+  offset1 <- rna_offset$count[idx1]
+  for (j in 1:nrow(all2mb)) {
+    idx2 <- all2mb$lower[j]:all2mb$upper[j]
+    if (any(idx1 %in% idx2)) {
+      next
+    }
+    offset2 <- rna_offset$count[idx2]
+    mat <- l1md_chr18[idx1,idx2]
+    y1 <- rowSums(mat)
+    D1 <- dcon:::normalize_hic(total_DNA_chr18[idx1,idx1], gamma=0.8)
+    y2 <- colSums(mat)
+    D2 <- dcon:::normalize_hic(total_DNA_chr18[idx2,idx2], gamma=0.8)
+    B1 <- dcon:::construct_basis(1:length(y1), df = length(y1))
+    B2 <- dcon:::construct_basis(1:length(y2), df = length(y2))
+    df1 <- length(y1)
+    df2 <- length(y2)
+    fit1 <- try(dcon:::fit_decon(y1, D1, df = df1, offset=offset1), silent=T)
+    fit2 <- try(dcon:::fit_decon(y2, D2, df = df2, offset=offset2), silent=T)
+    if (is(fit1, 'try-error') | is(fit2, 'try-error')) {
+      next
+    }
+    a1 <- fit1$a
+    predicted1 <- (B1%*%a1)-log(sum(exp(B1%*%a1)))
+    a2 <- fit2$a
+    predicted2 <- (B2%*%a2)-log(sum(exp(B2%*%a2)))
+    res <- exp(matrix(data = rep(predicted1, df1), nrow=df2, ncol=df1) + 
+                 t(matrix(data = rep(predicted2, df2), nrow = df1, ncol = df2)))
+    add_this <- list()
+    add_this[[paste0(j)]] <- res
+    fitted_results[[paste0(i)]] <- append(fitted_results[[paste0(i)]], add_this)
+  }
+}
+```
+
+
+```{r}
+# combine the middles
+all_results <- matrix(NA, nrow = 908, ncol = 100)
+for (i in names(fitted_results)) {
+  for (j in names(fitted_results[[i]])) {
+    idx_col <- as.integer(i)
+    idx_row <- as.integer(j)
+    start_row <- all2mb$lower[idx_row]
+    end_row <- all2mb$upper[idx_row]
+    all_results[start_row:end_row,idx_col] <- fitted_results[[i]][[j]][,11]
+  }
+}
+colnames(all_results) <- c(paste0('top_',c(1:50)), paste0('bottom_',c(1:50)))
+```
+
+
+```{r}
+dd <- bind_cols(melt(all_results[,1:50]) %>% dplyr::rename(id = Var2, deconvolved = value), melt(as.data.frame(as.matrix(OE_mat[,top_10]))) %>% dplyr::rename(OE = value) %>% select(OE)) 
+dd$l1md_rna <- rep(l1md_annot$l1md_rna, times=50)
+dd$frac <- rep(l1md_annot$frac, times=50)
+dd %>%
+  filter(!is.na(deconvolved)) %>%
+  ggplot(aes(x = log(deconvolved), y = frac)) +
+  geom_point(aes(color=OE),alpha=0.25,color='grey') +
+  geom_smooth(aes(group = factor(id)),method='loess',se=F,alpha=0.5,color='black',size=0.5) +
+  #geom_hline(yintercept=1, lty='dashed', color='red') +
+  scale_color_gradient2(low='blue',high='red',midpoint=1,mid='grey88') +
+  theme_classic()
+```
+
+
+
+
+
+
+
+
+

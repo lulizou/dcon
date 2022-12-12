@@ -1,0 +1,299 @@
+---
+output: html_document
+---
+
+```{r load-libraries}
+library(dplyr)
+library(ggplot2)
+library(reshape2)
+library(tidyr)
+library(data.table)
+library(Matrix)
+library(RColorBrewer)
+library(dcon)
+library(rtracklayer)
+library(viridis)
+library(irlba)
+```
+
+
+# Functions
+
+```{r helper-functions}
+plot_mat <- function(mat, idx = NULL, main = '', max = NULL, genes = NULL, 
+                     genes2 = NULL, xlimits = NULL,
+                     text = T, bedtrack = NULL, track1 = NULL, track2 = NULL,
+                     fill = 'red') {
+  m <- mat
+  if (is.null(max)) {
+    max <- max(mat)
+  }
+  rownames(m) <- windows$start[idx]/1e6
+  colnames(m) <- windows$start[idx]/1e6
+  p <- m %>%
+    as.matrix() %>%
+    reshape2::melt() %>%
+    mutate(value = ifelse(value > max, max, value)) %>%
+    ggplot(aes(x = Var2, y = Var1)) +
+    geom_raster(aes(fill = value)) +
+    theme_classic() +
+    scale_y_reverse() +
+    scale_fill_gradient(low='white',high=fill) +
+    ggtitle(main) +
+    xlab('') +
+    ylab('')
+  if (!is.null(genes)) {
+    addon <- 1e5/1e6
+    nudge <- addon/6
+    myy <- max(windows$start[idx]/1e6) + addon
+    p <- p +
+      geom_segment(data = genes, aes(x = start, xend = end, y = myy, yend=myy), 
+                   size=2, color='blue', position=position_jitter(height=addon-0.05, seed=1))
+    
+    if (text) {
+      p <- p + geom_text(data = genes, aes(x = (start+end)/2, y = myy+nudge, label = gene), 
+                         position=position_jitter(height=addon-0.05, seed=1), size=3, color='black')
+    }
+  }
+  if (!is.null(genes2)) {
+    addon <- 1e5/1e6
+    nudge <- addon/6
+    myy <- max(windows$start[idx]/1e6) + 2*addon
+    p <- p +
+      geom_curve(data = genes2, aes(x = start, xend = end, y = myy, yend=myy), 
+                 size=2, color='purple', position=position_jitter(height=addon-0.05, seed=1))
+    
+    if (text) {
+      p <- p + geom_text(data = genes2, aes(x = (start+end)/2, y = myy+nudge, label = gene), 
+                         position=position_jitter(height=addon-0.05, seed=1), size=3, color='black')
+    }
+  }
+  if (!is.null(bedtrack)) {
+    addon <- 1e5/1e6/4
+    myy2 <- min(windows$start[idx]/1e6) - addon
+    p <- p +
+      geom_segment(data = bedtrack, aes(x = start, xend = end, y = myy2, yend=myy2, color = score),
+                   size=2) +
+      geom_segment(data = bedtrack, aes(x = myy2, xend = myy2, y = start, yend=end, color = score),
+                   size=2) +
+      scale_color_viridis()
+  }
+  if (!is.null(track1)) {
+    p <- p + geom_point(data = track1, aes(x = start, y = -score+144.1), size=0.5)
+  }
+  if (!is.null(track2)) {
+    p <- p + geom_point(data = track2, aes(x = start, y = -score+144.2), size=0.5)
+  }
+  if (!is.null(xlimits)) {
+    p <- p + xlim(xlimits)
+  }
+  print(p)
+}
+
+get_genes <- function(idx) {
+  mygr <- makeGRangesFromDataFrame(
+    data.frame(chrom = windows$chrom[idx],
+               start = windows$start[idx],
+               end = windows$end[idx])
+  )
+  ovl <- findOverlaps(mygr, gencode)
+  genc <- gencode[unique(subjectHits(ovl)),]
+  genc <- genc[genc$type%in%c('gene')]
+  data.frame(
+    chrom = seqnames(genc),
+    start = start(ranges(genc)),
+    end = end(ranges(genc)),
+    type = genc$type,
+    gene = genc$gene_name
+  )
+}
+
+get_rmsk <- function(idx) {
+  mygr <- makeGRangesFromDataFrame(
+    data.frame(chrom = windows$chrom[idx],
+               start = windows$start[idx],
+               end = windows$end[idx])
+  )
+  ovl <- findOverlaps(mygr, rmsk)
+  genc <- rmsk[unique(subjectHits(ovl)),]
+  data.frame(
+    chrom = seqnames(genc),
+    start = start(ranges(genc)),
+    end = end(ranges(genc)),
+    class = genc$repClass,
+    gene = genc$repName
+  )
+}
+
+# do a 1mb window around each gene
+make_plots <- function(mol) {
+  DF <- 50
+  GAMMA <- 0.8
+  DNA_CUTOFF <- 50
+  m <- readMM(paste0('/rafalab/lzou/rdsprite/dna_matrix/',mol,'_DNA_matrix_count_RNA_10000_clusters_2-100.mtx'))
+  m <- m + t(m) - Diagonal(x=diag(m))
+  gentry <- gencode[which(gencode$gene_name == mol & gencode$type == 'gene'),]
+  start <- start(ranges(gentry))
+  end <- end(ranges(gentry))
+  idx_gene <- windows$idx[which(windows$chrom==as.character(seqnames(gentry)) & windows$start >= floor((start)/1e4)*1e4 & windows$end <= floor((end)/1e4)*1e4)]
+  start <- floor((start-5e5)/1e4)*1e4 # round to the nearest 10kb
+  end <- floor((end+5e5)/1e4)*1e4
+  idx <- windows$idx[which(windows$chrom==as.character(seqnames(gentry)) & windows$start >= start & windows$end <= end)]
+  tot <- total_DNA[idx,idx]
+  g <- get_genes(idx)
+  g$start <- ifelse(g$start < start, start, g$start)
+  g$start <- g$start/1e6
+  g$end <- g$end/1e6
+  mat <- m[idx,idx]
+  plot_mat(mat, idx, main = mol, genes = g)
+  ggsave(paste0('rdsprite-',mol,'-before.pdf'), height=4, width=4)
+  plot_mat(tot, idx, main = paste0(mol, ' region DNA-DNA contacts'), max=100, genes = g)
+  ggsave(paste0('rdsprite-',mol,'-DD.pdf'), height=4, width=4)
+  norm_tot <- dcon:::normalize_hic(tot, gamma=GAMMA, threshold = DNA_CUTOFF)
+  y1 <- rowSums(mat)
+  fit1 <- dcon:::fit_decon(y1, norm_tot, df = DF)
+  res <- exp(matrix(data = rep(fit1$est, length(y1)), nrow=length(y1), ncol=length(y1)) + 
+               t(matrix(data = rep(fit1$est, length(y1)), nrow = length(y1), ncol = length(y1))))
+  res <- res/max(res)
+  plot_mat(res, idx, genes = g, main = paste(mol, 'after'))
+  ggsave(paste0('rdsprite-',mol,'-after.pdf'), height=4, width=4)
+  # summarize the after
+  avg_these <- which(idx %in% idx_gene)
+  keep_these <- c(1:length(idx))[-avg_these]
+  avg_over_gene <- mean(fit1$est[avg_these])
+  fit2 <- c(fit1$est[1:(min(avg_these)-1)], avg_over_gene, fit1$est[(max(avg_these)+1):length(fit1$est)])
+  res2 <- exp(matrix(data = rep(fit2, length(fit2)), nrow=length(fit2), ncol=length(fit2)) + 
+                t(matrix(data = rep(fit2, length(fit2)), nrow = length(fit2), ncol = length(fit2))))
+  res2 <- res2/max(res2)
+  # summarize the before
+  if (nrow(mat)>101) {
+    lower <- (min(avg_these)-1)
+    upper <- (max(avg_these)+1)
+    avg_over_gene <- mean(mat[avg_these, avg_these]) # avg box in the center
+    avg_above_gene <- rowMeans(mat[1:lower, avg_these])
+    avg_below_gene <- rowMeans(mat[upper:nrow(mat), avg_these])
+    avg_left_of_gene <- colMeans(mat[avg_these,1:lower])
+    avg_right_of_gene <- colMeans(mat[avg_these,upper:ncol(mat)])
+    bef_top <- cbind(mat[1:lower, 1:lower], 
+                     avg_above_gene,
+                     mat[1:lower, upper:ncol(mat)])
+    bef_middle <- c(avg_left_of_gene, avg_over_gene, avg_right_of_gene)
+    bef_bottom <- cbind(mat[upper:nrow(mat),1:lower], avg_below_gene, 
+                        mat[upper:nrow(mat),upper:nrow(mat)])
+    bef <- rbind(bef_top,bef_middle,bef_bottom)
+  } else {
+    bef <- mat
+  }
+  bef <- bef/max(bef)
+  dimnames(bef) <- list(NULL,NULL)
+  return(list(res1=bef,res2=res2))
+}
+```
+
+
+```{r load-data}
+windows <- fread('/rafalab/lzou/rdsprite/dna_matrix/mm10.10kb.windows', header=F, col.names=c('chrom','start','end'))
+windows$idx <- seq(1,nrow(windows))
+total_DNA <- readMM('/rafalab/lzou/rdsprite/total_DD_DNA_matrix_10000_clusters_2-100.mtx')
+total_DNA <- total_DNA + t(total_DNA) - Diagonal(x=diag(total_DNA))
+offset <- fread('/rafalab/lzou/rdsprite/count_windows/total_RNA_count_windows_10000_clusters_2-100.csv')
+gencode <- import('/rafalab/lzou/resources/gencode.vM10.annotation.gff3.gz')
+rmsk <- fread('/rafalab/lzou/resources/mm10.rmsk')
+colnames(rmsk)[1:3] <- c('chrom','start','end')
+rmsk <- makeGRangesFromDataFrame(rmsk, keep.extra.columns = T)
+```
+
+# Non-coding
+
+```{r}
+avg_before <- matrix(0, nrow = 101, ncol = 101)
+avg_after <- matrix(0, nrow = 101, ncol = 101)
+for (i in c('Malat1', 'Neat1', 'Kcnq1ot1', 'Meg3', 'Xist')) {
+  d <- make_plots(i)
+  avg_before <- avg_before + d$res1
+  avg_after <- avg_after + d$res2
+}
+(avg_before/5) %>%
+  as.matrix() %>%
+  reshape2::melt() %>%
+  ggplot(aes(x = Var2, y = Var1)) +
+  geom_raster(aes(fill = value)) +
+  theme_classic() +
+  scale_y_reverse() +
+  scale_fill_gradient(low='white',high='red') +
+  ggtitle('Average 1mb around non-coding RNAs, before')
+(avg_after/5) %>%
+  as.matrix() %>%
+  reshape2::melt() %>%
+  ggplot(aes(x = Var2, y = Var1)) +
+  geom_raster(aes(fill = value)) +
+  theme_classic() +
+  scale_y_reverse() +
+  scale_fill_gradient(low='white',high='red') +
+  ggtitle('Average 1mb around non-coding RNAs, after')
+```
+
+# Coding
+
+```{r}
+avg_before_coding <- matrix(0, nrow = 101, ncol = 101)
+avg_after_coding <- matrix(0, nrow = 101, ncol = 101)
+for (i in c('Cnot1', 'Eef1a1', 'Fn1', 'Hsp90ab1', 'Tet1',
+            'Eef2', 'Eif3a','Ncl', 'Ptma', 'Scd2',
+            'Serbp1', 'Ywhae')) {
+  d <- make_plots(i)
+  avg_before_coding <- avg_before_coding + d$res1
+  avg_after_coding <- avg_after_coding + d$res2
+}
+(avg_before_coding/12) %>%
+  as.matrix() %>%
+  reshape2::melt() %>%
+  ggplot(aes(x = Var2, y = Var1)) +
+  geom_raster(aes(fill = value)) +
+  theme_classic() +
+  scale_y_reverse() +
+  scale_fill_gradient(low='white',high='red') +
+  ggtitle('Average 1mb around coding RNAs, before')
+(avg_after_coding/12) %>%
+  as.matrix() %>%
+  reshape2::melt() %>%
+  ggplot(aes(x = Var2, y = Var1)) +
+  geom_raster(aes(fill = value)) +
+  theme_classic() +
+  scale_y_reverse() +
+  scale_fill_gradient(low='white',high='red') +
+  ggtitle('Average 1mb around coding RNAs, after')
+```
+
+
+# Compare coding and non-coding
+
+
+```{r}
+((avg_before/5)/(avg_before_coding/12))[10:90,10:90] %>%
+  as.matrix() %>%
+  reshape2::melt() %>%
+  ggplot(aes(x = Var2, y = Var1)) +
+  geom_raster(aes(fill = value)) +
+  theme_classic() +
+  scale_y_reverse() +
+  scale_fill_gradient(low='white',high='red') +
+  ggtitle('Average 1mb around coding RNAs, before')
+```
+
+```{r}
+((avg_after/5)/(avg_after_coding/12))[10:90,10:90] %>%
+  as.matrix() %>%
+  reshape2::melt() %>%
+  ggplot(aes(x = Var2, y = Var1)) +
+  geom_raster(aes(fill = value)) +
+  theme_classic() +
+  scale_y_reverse() +
+  scale_fill_gradient(low='white',high='red') +
+  ggtitle('Average 1mb around coding RNAs, after')
+```
+
+
+
+
+

@@ -1,0 +1,74 @@
+---
+title: "HiChIP loop strengthening K562 MNase CTCF"
+output: html_document
+params:
+  chrom: 'chr22'
+---
+
+
+This vignette demonstrates how to use deconvolution to perform HiChIP
+loop strengthening. The input is HiChIP sparse matrices, loop anchors,
+and HiC. The output is the before-deconvolution count and the 
+post-deconvolution pseudocount PETs for each input loop.
+
+
+
+```{r load-libraries}
+library(data.table)
+library(Matrix)
+library(dplyr)
+library(dcon)
+library(GenomicRanges)
+library(strawr)
+
+
+current_chrom <- params$chrom
+RESOLUTION <- 2500
+MIN_DIST <- 40
+```
+
+
+```{r load-data}
+mychroms <- c(paste0('chr',seq(1,22)),'chrX')
+coords <- dcon:::load_coords('/rafalab/lzou/hichip_lps/DD10_allValidPairs_abs.bed')
+# dd10 <- dcon:::load_hichip('/rafalab/lzou/hichip_lps/DD10_allValidPairs.matrix', coords=coords, chrom = current_chrom)
+# dd20 <- dcon:::load_hichip('/rafalab/lzou/hichip_lps/DD20_allValidPairs.matrix', coords=coords, chrom = current_chrom)
+# dd31 <- dcon:::load_hichip('/rafalab/lzou/hichip_lps/DD31_allValidPairs.matrix', coords=coords, chrom = current_chrom)
+lps141_1 <- dcon:::load_hichip('/rafalab/lzou/hichip_lps/LPS141_1_allValidPairs_2500.matrix', coords=coords, chrom = current_chrom)
+lps141_2 <- dcon:::load_hichip('/rafalab/lzou/hichip_lps/LPS141_2_allValidPairs_2500.matrix', coords=coords, chrom = current_chrom)
+lps853_1 <- dcon:::load_hichip('/rafalab/lzou/hichip_lps/LPS853_1_allValidPairs_2500.matrix', coords=coords, chrom = current_chrom)
+lps853_2 <- dcon:::load_hichip('/rafalab/lzou/hichip_lps/LPS853_2_allValidPairs_2500.matrix', coords=coords, chrom = current_chrom)
+# Load in FitHiChIP loops
+coords <- coords[seqnames(coords)==current_chrom,]
+coords$id <- seq(1,length(coords))
+# loops <- dcon:::load_anchors('/rafalab/lzou/hichip_lps/loops/DD10_E_E_loops.bedpe', '/rafalab/lzou/hichip_lps/loops/DD10_E_P_loops.bedpe', '/rafalab/lzou/hichip_lps/loops/DD10_P_P_loops.bedpe', '/rafalab/lzou/hichip_lps/loops/DD20_E_E_loops.bedpe', '/rafalab/lzou/hichip_lps/loops/DD20_E_P_loops.bedpe', '/rafalab/lzou/hichip_lps/loops/DD20_P_P_loops.bedpe','/rafalab/lzou/hichip_lps/loops/DD31_E_E_loops.bedpe', '/rafalab/lzou/hichip_lps/loops/DD31_E_P_loops.bedpe', '/rafalab/lzou/hichip_lps/loops/DD31_P_P_loops.bedpe', '/rafalab/lzou/hichip_lps/loops/LPS141_1_E_E_loops.bedpe', '/rafalab/lzou/hichip_lps/loops/LPS141_1_E_P_loops.bedpe', '/rafalab/lzou/hichip_lps/loops/LPS141_1_P_P_loops.bedpe', '/rafalab/lzou/hichip_lps/loops/LPS141_2_E_E_loops.bedpe', '/rafalab/lzou/hichip_lps/loops/LPS141_2_E_P_loops.bedpe', '/rafalab/lzou/hichip_lps/loops/LPS141_2_P_P_loops.bedpe', '/rafalab/lzou/hichip_lps/loops/LPS853_1_E_E_loops.bedpe', '/rafalab/lzou/hichip_lps/loops/LPS853_1_E_P_loops.bedpe', '/rafalab/lzou/hichip_lps/loops/LPS853_1_P_P_loops.bedpe', '/rafalab/lzou/hichip_lps/loops/LPS853_2_E_E_loops.bedpe', '/rafalab/lzou/hichip_lps/loops/LPS853_2_E_P_loops.bedpe', '/rafalab/lzou/hichip_lps/loops/LPS853_2_P_P_loops.bedpe', coords=coords,
+#                              type='hichipper', resolution=RESOLUTION, chrom = current_chrom)
+loops <- dcon:::load_anchors('/rafalab/lzou/hichip_lps/loops/LPS141_1_E_E_loops.bedpe', '/rafalab/lzou/hichip_lps/loops/LPS141_1_E_P_loops.bedpe', '/rafalab/lzou/hichip_lps/loops/LPS141_1_P_P_loops.bedpe', '/rafalab/lzou/hichip_lps/loops/LPS141_2_E_E_loops.bedpe', '/rafalab/lzou/hichip_lps/loops/LPS141_2_E_P_loops.bedpe', '/rafalab/lzou/hichip_lps/loops/LPS141_2_P_P_loops.bedpe', '/rafalab/lzou/hichip_lps/loops/LPS853_1_E_E_loops.bedpe', '/rafalab/lzou/hichip_lps/loops/LPS853_1_E_P_loops.bedpe', '/rafalab/lzou/hichip_lps/loops/LPS853_1_P_P_loops.bedpe', '/rafalab/lzou/hichip_lps/loops/LPS853_2_E_E_loops.bedpe', '/rafalab/lzou/hichip_lps/loops/LPS853_2_E_P_loops.bedpe', '/rafalab/lzou/hichip_lps/loops/LPS853_2_P_P_loops.bedpe', coords=coords,
+                             type='hichipper', resolution=RESOLUTION, chrom = current_chrom)
+loops <- loops %>% 
+  filter(bin2-bin1>MIN_DIST) 
+hic <- readMM(paste0('/rafalab/lzou/hichip_mnase/K562_HiC_',current_chrom,'_2500.mtx'))
+hic <- as(hic, 'dgTMatrix')
+hic <- as(hic, 'dgCMatrix')
+```
+
+```{r make-dcon-object}
+myDcon <- Dcon(mat = list(lps141_1 = lps141_1, lps141_2 = lps141_2, lps853_1 = lps853_1, lps853_2 = lps853_2),
+               coords = coords,
+               loops = loops ,
+               hic = list(hic))
+myDcon
+```
+
+
+
+```{r}
+myDconvolved <- dcon::deconvolve(myDcon, gamma=0.8, pad=10, save_mat = T, pad_center=T)
+```
+
+
+
+```{r}
+saveRDS(myDconvolved, file=paste0('lps_2500_results_g0.8_',current_chrom,'.rds'))
+```
+

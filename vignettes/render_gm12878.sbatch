@@ -3,9 +3,9 @@
 #SBATCH --job-name=render
 #SBATCH --output=render_%A_%a.out
 #SBATCH --error=render_%A_%a.err
-#SBATCH --time=12:00:00
-#SBATCH --mem=10G
-#SBATCH --array=1-22
+#SBATCH --time=01:00:00
+#SBATCH --mem=16G
+#SBATCH --array=0-22
 
 module load R/4.1
 

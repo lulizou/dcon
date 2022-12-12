@@ -1,0 +1,187 @@
+---
+output: html_document
+params:
+  chrom: 'chr18'
+---
+
+```{r setup}
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(data.table)
+library(Matrix)
+library(dcon)
+
+library(rtracklayer)
+library(InteractionSet)
+mychrom <- params$chrom
+```
+
+```{r}
+windows <- fread('/rafalab/lzou/rdsprite/dna_matrix/mm10.100kb.windows', header=F, col.names=c('chrom','start','end'))
+windows$start <- windows$start+1
+windows$idx <- seq(1,nrow(windows))
+l1 <- readMM('/rafalab/lzou/rdsprite/dna_matrix/L1,LINE|LINE,L1_DNA_matrix_count_RNA_100000_clusters_2-100.mtx')
+l1_chr <- l1[windows$idx[windows$chrom==mychrom],windows$idx[windows$chrom==mychrom]]
+rm(l1)
+l1md <- readMM('/rafalab/lzou/rdsprite/dna_matrix/L1Md_DNA_matrix_count_RNA_100000_clusters_2-100.mtx')
+l1md_chr <- l1md[windows$idx[windows$chrom==mychrom],windows$idx[windows$chrom==mychrom]]
+rm(l1md)
+b1 <- readMM('/rafalab/lzou/rdsprite/dna_matrix/Alu,SINE|SINE,Alu_DNA_matrix_count_RNA_100000_clusters_2-100.mtx')
+b1_chr <- b1[windows$idx[windows$chrom==mychrom],windows$idx[windows$chrom==mychrom]]
+rm(b1)
+total_DNA <- readMM('/rafalab/lzou/rdsprite/total_DNA_matrix_100000_clusters_2-100.mtx')
+total_DNA_chr <- as(total_DNA[windows$idx[windows$chrom==mychrom],windows$idx[windows$chrom==mychrom]], 'dgCMatrix')
+rm(total_DNA)
+compartments <- fread('/rafalab/lzou/rdsprite/mm10_mESC_bonev2017_tableS2.csv')
+
+l1_annot <- fread('/rafalab/lzou/resources/mm10.100kb.windows.L1.coverage',
+                  col.names = c('chrom','start','end','nfeatures', 'nbp',
+                                'tot', 'frac')) |>
+  filter(chrom==mychrom)
+l1md_annot <- fread('/rafalab/lzou/resources/mm10.100kb.windows.L1Md.coverage',
+                    col.names = c('chrom','start','end','nfeatures', 'nbp',
+                                  'tot', 'frac'))|>
+  filter(chrom==mychrom)
+b1_annot <- fread('/rafalab/lzou/resources/mm10.100kb.windows.B1.coverage',
+                  col.names = c('chrom','start','end','nfeatures', 'nbp',
+                                'tot', 'frac')) |>
+  filter(chrom==mychrom)
+```
+
+```{r subset-data}
+# get a basic observed/expected for chr18
+dd <- summary(total_DNA_chr) %>%
+  mutate(dist = j-i)
+
+expec <- dd %>%
+  group_by(dist) %>%
+  summarise(expected = mean(x))
+
+dd <- dd %>%
+  left_join(expec, by = 'dist') %>%
+  mutate(OE = x/expected)
+
+OE_mat <- sparseMatrix(i=dd$i, j= dd$j, x = dd$OE, dims=c(908,908))
+```
+
+```{r make-regions}
+make_sliding_gints <- function(chrom, size=5e6, step=2.5e6, dist.apart = seq(5e6,50e6,5e6)) {
+  chromsizes <- fread('/rafalab/lzou/resources/mm10.chrom.sizes', col.names = c('chrom','end')) |>
+    mutate(start = 1) |>
+    makeGRangesFromDataFrame()
+  allregions <- unlist(slidingWindows(chromsizes, size, step))
+  chrregions <- allregions[seqnames(allregions)==chrom]
+  full_list <- NULL
+  for (i in seq_along(dist.apart)) {
+    gap <- dist.apart[i]/step
+    gi <- GInteractions(chrregions[1:(length(chrregions)-gap)],
+                        chrregions[(1+gap):length(chrregions)])
+    if (is.null(full_list)) {
+      full_list <- gi
+    } else {
+      full_list <- append(full_list, gi)
+    }
+  }
+  return(full_list)
+}
+```
+
+```{r}
+# deconvolve each region
+rna_offset <- fread('/rafalab/lzou/rdsprite/total_RNA_count_windows_100000_clusters_2-100.csv') |>
+  filter(chrom==mychrom) |>
+  select(-V1)
+
+windows <- fread('/rafalab/lzou/rdsprite/dna_matrix/mm10.100kb.windows', header=F, col.names=c('chrom','start','end'))
+windows$start <- windows$start+1
+windows <- windows |> filter(chrom==mychrom)
+windows$idx <- seq(1,nrow(windows))
+windows <- makeGRangesFromDataFrame(windows, keep.extra.columns = T)
+```
+
+
+```{r}
+myint <- make_sliding_gints(chrom=mychrom, size=1e6, step=5e5, dist.apart=seq(1e6,10e6,1e6))
+myint$avg_l1_dna <- 0
+myint$avg_b1_dna <- 0
+myint$avg_l1md_dna <- 0
+myint$avg_oe <- 0
+myint$avg_total_contacts <- 0
+myint$dist <- pairdist(myint)
+```
+
+```{r}
+fitted_results <- list()
+for (i in seq_along(myint)) {
+  message(i)
+  anch <- anchors(myint[i])
+  ovl1 <- findOverlaps(windows, anch$first)
+  idx1 <- windows[queryHits(ovl1)]$idx
+  offset1 <- rna_offset$count[rna_offset$start>=start(anch$first) & rna_offset$start <= end(anch$first)]
+  ovl2 <- findOverlaps(windows, anch$second)
+  idx2 <- windows[queryHits(ovl2)]$idx
+  offset2 <- rna_offset$count[rna_offset$start>=start(anch$second) & rna_offset$start <= end(anch$second)]
+  ############
+  l1 <- l1md_annot |> 
+    filter(start >=start(anch$first), start <= end(anch$first)) |>
+    pull(frac)
+  l2 <- l1md_annot |>
+    filter(start >= start(anch$second), start <= end(anch$second)) |>
+    pull(frac)
+  m <- matrix(rep(l1, length(l2)), nrow=length(l1), ncol=length(l2)) +
+    t(matrix(rep(l2, length(l1)), nrow = length(l2), ncol=length(l1)))
+  myint$avg_l1md_dna[i] <- mean(m)
+  b1 <- b1_annot |> 
+    filter(start >=start(anch$first), start <= end(anch$first)) |>
+    pull(frac)
+  b2 <- b1_annot |>
+    filter(start >= start(anch$second), start <= end(anch$second)) |>
+    pull(frac)
+  m <- matrix(rep(b1, length(b2)), nrow=length(b1), ncol=length(b2)) +
+    t(matrix(rep(b2, length(b1)), nrow = length(b2), ncol=length(b1)))
+  myint$avg_b1_dna[i] <- mean(m)
+  l1 <- l1_annot |> 
+    filter(start >=start(anch$first), start <= end(anch$first)) |>
+    pull(frac)
+  l2 <- l1_annot |>
+    filter(start >= start(anch$second), start <= end(anch$second)) |>
+    pull(frac)
+  m <- matrix(rep(l1, length(l2)), nrow=length(l1), ncol=length(l2)) +
+    t(matrix(rep(l2, length(l1)), nrow = length(l2), ncol=length(l1)))
+  myint$avg_l1_dna[i] <- mean(m)
+  myint$avg_oe[i] <- mean(OE_mat[idx1,idx2])
+  myint$avg_total_contacts[i] <- mean(total_DNA_chr[idx1,idx2])
+  #############
+  l1md_mat <- l1md_chr[idx1,idx2]
+  y1 <- rowSums(l1md_mat)
+  D1 <- dcon:::normalize_hic(total_DNA_chr[idx1,idx1], gamma=0.5)
+  y2 <- colSums(l1md_mat)
+  D2 <- dcon:::normalize_hic(total_DNA_chr[idx2,idx2], gamma=0.5)
+  B1 <- dcon:::construct_basis(1:length(y1), df = length(y1))
+  B2 <- dcon:::construct_basis(1:length(y2), df = length(y2))
+  df1 <- length(y1)
+  df2 <- length(y2)
+  fit1 <- try(dcon:::fit_decon(y1, D1, df = df1, offset=offset1), silent=T)
+  fit2 <- try(dcon:::fit_decon(y2, D2, df = df2, offset=offset2), silent=T)
+  if (is(fit1, 'try-error') | is(fit2, 'try-error')) {
+    fitted_results <- append(fitted_results, list(i=NA))
+    next
+  }
+  a1 <- fit1$a
+  predicted1 <- (B1%*%a1)-log(sum(exp(B1%*%a1)))
+  
+  a2 <- fit2$a
+  predicted2 <- (B2%*%a2)-log(sum(exp(B2%*%a2)))
+  res <- exp(matrix(data = rep(predicted1, df1), nrow=df2, ncol=df1) + 
+               t(matrix(data = rep(predicted2, df2), nrow = df1, ncol = df2)))
+  fitted_results <- append(fitted_results, list(i=res))
+}
+```
+
+```{r}
+save(myint, fitted_results, file = paste0('rdsprite_scan_', mychrom, '.RData'))
+```
+
+
+

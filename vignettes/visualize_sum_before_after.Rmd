@@ -1,0 +1,246 @@
+---
+output: html_document
+---
+
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(data.table)
+library(ggthemes)
+library(rtracklayer)
+library(RColorBrewer)
+```
+
+```{r}
+plot_mat <- function(mat, main='') {
+  print(
+    reshape2::melt(as.matrix(mat)) %>%
+      ggplot(aes(x = Var2, y = Var1)) +
+      geom_tile(aes(fill=value),color='grey') +
+      scale_fill_gradient(low='white',high='red') +
+      scale_y_reverse() +
+      theme_classic() +
+      xlab('Anchor 1') +
+      ylab('Anchor 2') + 
+      #annotate("rect", xmin = 9.5, xmax = 12.5, ymin = 9.5, ymax = 12.5, color='blue', lty='dashed', fill=NA) +
+      ggtitle(main)
+  )
+  
+}
+
+
+plot_mat_compare <- function(before, after, main='') {
+  reshape2::melt(as.matrix(before)) %>%
+      mutate(type = 'Before') %>%
+      bind_rows(reshape2::melt(as.matrix(after)) %>% mutate(type = 'After')) %>%
+      mutate(type = factor(type, levels = c('Before', 'After'))) %>%
+      ggplot(aes(x = Var2, y = Var1)) + 
+      geom_tile(aes(fill=value),color='grey') +
+      scale_fill_gradient('Avg. count',low='white',high='red') +
+      scale_y_reverse() +
+      theme_minimal() +
+      theme(axis.text = element_blank(), panel.grid = element_blank()) +
+      facet_wrap(type ~ .) +
+      xlab('') +
+      ylab('') + 
+      #annotate("rect", xmin = 9.5, xmax = 12.5, ymin = 9.5, ymax = 12.5, color='blue', lty='dashed', fill=NA) +
+      ggtitle(main)
+}
+```
+
+
+```{r}
+myfiles <- list.files(pattern = 'gm12878_5000_results_sum_chr.*rds')
+before <- NULL
+after <- NULL
+n <- 0
+for (f in myfiles) {
+  d <- readRDS(f)
+  chr <- unlist(strsplit(unlist(strsplit(f,'_'))[5],'\\.'))[1]
+  if (is.null(before)) {
+    before <- d@mat$sum_before
+    after <- d@mat$sum_after
+  } else {
+    before <- before+d@mat$sum_before
+    after <- after+d@mat$sum_after
+  }
+  n <- n + d@mat$n
+}
+plot_mat_compare(before/n, after/n, main = 'Restriction enzyme HiChIP: GM12878 cohesin') +
+  scale_fill_gradient('Avg. count',low='white',high='red', limits=c(0,12.5))
+ggsave('gm12878_cohesin_before_after.pdf', height=3, width=6, units='in')
+```
+
+
+
+```{r}
+myfiles <- list.files(pattern = 'k562_ctcf_2500_results_sum_chr.*rds')
+before <- NULL
+after <- NULL
+n <- 0
+for (f in myfiles) {
+  d <- readRDS(f)
+  chr <- unlist(strsplit(unlist(strsplit(f,'_'))[5],'\\.'))[1]
+  if (is.null(before)) {
+    before <- d@mat$sum_before
+    after <- d@mat$sum_after
+  } else {
+    before <- before+d@mat$sum_before
+    after <- after+d@mat$sum_after
+  }
+  n <- n + d@mat$n
+}
+plot_mat_compare(before/n, after/n, main = 'MNase HiChIP: K562 CTCF') +
+  scale_fill_gradient('Avg. count',low='white',high='red', limits=c(0,6))
+ggsave('k562_ctcf_before_after.pdf', height=3, width=6, units='in')
+```
+
+
+# concordance between replicates
+
+```{r}
+myfiles <- list.files(pattern = 'gm12878_5000_results_sum_gamma0.25_chr.*rds')
+results <- NULL
+n <- 0
+for (f in myfiles) {
+  d <- readRDS(f)
+  chr <- unlist(strsplit(unlist(strsplit(f,'_'))[6],'\\.'))[1]
+  r <- d@results$df
+  r$chrom <- chr
+  if (is.null(results)) {
+    results <- r
+  } else {
+    results <- bind_rows(results, r)
+  }
+}
+```
+
+
+```{r}
+results %>%
+  pivot_wider(names_from = label, values_from = diff) %>%
+  ggplot(aes(x = log2(before+1), y = log2(after+1))) +
+  geom_point(color='grey', alpha=0.25) +
+  geom_abline(slope=1, intercept=0, lty='dashed', color='red') +
+  theme_classic() +
+  facet_wrap(chrom ~ .) +
+  xlab('log2(Before+1)') +
+  ylab('log2(After+1)')
+```
+
+
+```{r}
+myfiles <- list.files(pattern = 'gm12878_5000_results_sum_gamma0.1_chr.*rds')
+results <- NULL
+n <- 0
+for (f in myfiles) {
+  d <- readRDS(f)
+  chr <- unlist(strsplit(unlist(strsplit(f,'_'))[6],'\\.'))[1]
+  r <- d@results$df
+  r$chrom <- chr
+  if (is.null(results)) {
+    results <- r
+  } else {
+    results <- bind_rows(results, r)
+  }
+}
+```
+
+
+```{r}
+results %>%
+  pivot_wider(names_from = label, values_from = diff) %>%
+  ggplot(aes(x = log2(before+1), y = log2(after+1))) +
+  geom_point(color='grey', alpha=0.25) +
+  geom_abline(slope=1, intercept=0, lty='dashed', color='red') +
+  theme_classic() +
+  facet_wrap(chrom ~ .) +
+  xlab('log2(Before+1)') +
+  ylab('log2(After+1)')
+```
+
+
+```{r}
+results %>%
+  pivot_wider(names_from = label, values_from = diff) %>%
+  ggplot(aes(x = log2(before+1), y = log2(after+1))) +
+  geom_point(color='grey', alpha=0.25) +
+  geom_abline(slope=1, intercept=0, lty='dashed', color='red') +
+  theme_classic() +
+  xlab('log2(Before+1)') +
+  ylab('log2(After+1)')
+ggsave('gm12878_before_after_scatter.pdf', height=3, width=3)
+```
+
+
+```{r}
+myfiles <- list.files(pattern = 'k562_ctcf_2500_results_sum_gamma0.5_chr.*rds')
+myfiles <- myfiles[-1]
+results <- NULL
+n <- 0
+for (f in myfiles) {
+  d <- readRDS(f)
+  chr <- unlist(strsplit(unlist(strsplit(f,'_'))[7],'\\.'))[1]
+  r <- d@results$df
+  r$chrom <- chr
+  if (is.null(results)) {
+    results <- r
+  } else {
+    results <- bind_rows(results, r)
+  }
+}
+```
+
+
+```{r}
+results %>%
+  pivot_wider(names_from = label, values_from = diff) %>%
+  ggplot(aes(x = log2(before+1), y = log2(after+1))) +
+  geom_point(color='grey', alpha=0.25) +
+  geom_abline(slope=1, intercept=0, lty='dashed', color='red') +
+  theme_classic() +
+  xlab('log2(Before+1)') +
+  ylab('log2(After+1)')
+ggsave('k562_before_after_scatter.pdf', height=3, width=3)
+```
+
+
+
+```{r}
+myfiles <- list.files(pattern = 'k562_ctcf_2500_results_sum_chr.*rds')
+myfiles <- myfiles[-1]
+results <- NULL
+n <- 0
+for (f in myfiles) {
+  d <- readRDS(f)
+  chr <- unlist(strsplit(unlist(strsplit(f,'_'))[6],'\\.'))[1]
+  r <- d@results$df
+  r$chrom <- chr
+  if (is.null(results)) {
+    results <- r
+  } else {
+    results <- bind_rows(results, r)
+  }
+}
+```
+
+
+```{r}
+results %>%
+  pivot_wider(names_from = label, values_from = diff) %>%
+  ggplot(aes(x = before, y = after)) +
+  geom_point(color='grey', alpha=0.1) +
+  geom_abline(slope=1, intercept=0, lty='dashed', color='red') +
+  theme_classic() +
+  xlab('Before') +
+  ylab('After')
+ggsave('k562_before_after_scatter.pdf', height=3, width=3)
+```
+
+
+
+
+
+

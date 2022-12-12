@@ -22,16 +22,33 @@ get_pairwise_diff <- function(matrix_list, idx1, idx2, label='') {
 #' @param type the type of the anchor file. Supports fithichip
 #' @param use whether or not to use the intersection or union if there are 
 #' multiple input files
-load_anchors <- function(..., coords, type='fithichip', use='intersection') {
+load_anchors <- function(..., coords, type='fithichip', use='union',
+                         resolution = NULL, chrom = NULL) {
   if (!use%in%c('union','intersection')) {
     stop('use parameter must be either union or intersection')
   }
+  if (!type%in%c('fithichip','hichipper')) {
+    stop('use parameter must be either fithichip or hichipper')
+  }
+  if (type == 'hichipper' & is.null(resolution)) {
+    stop('if loading in hichipper, must specify resolution of loops e.g. 2500')
+  }
   input_files <- list(...)
   dfs <- list()
-  # load in fithichip
   bin_pairs <- NULL
   for (i in 1:length(input_files)) {
     d <- fread(input_files[[i]])
+    if (type == 'hichipper') {
+      colnames(d) <- c('chr1', 's1', 'e1', 'chr2', 's2', 'e2', 'idk1', 'count')
+      d$source <- input_files[[i]]
+      d$s1 <- round(d$s1/resolution)*resolution
+      d$s2 <- round(d$s2/resolution)*resolution
+      d$e1 <- d$s1+resolution
+      d$e2 <- d$s2+resolution
+    }
+    if (!is.null(chrom)) {
+      d <- d %>% filter(chr1==chrom)
+    }
     d$bin1 <- left_join(
       d[,c('chr1','s1','e1')] %>% 
         dplyr::rename(seqnames=chr1, start=s1, end=e1),
@@ -57,8 +74,15 @@ load_anchors <- function(..., coords, type='fithichip', use='intersection') {
   }
   if (use == 'intersection') {
     dfs[[1]] <- dfs[[1]] %>% dplyr::filter(bin_pair %in% bin_pairs)
+    return(dfs[[1]])
+  } else if (use == 'union') {
+    big_df <- dfs[[1]]
+    for (i in 2:length(dfs)) {
+      big_df <- bind_rows(big_df, dfs[[i]])
+    }
+    return(big_df %>% distinct())
   }
-  return(dfs[[1]])
+  
 }
 
 
@@ -82,12 +106,19 @@ load_coords <- function(filename, type='hic-pro') {
 #' @param filename specifies the name of the file to load in
 #' @param coords specifies the total dimensions of the matrix, created from bins
 #' using load_coords.
+#' @param chrom specifies which chromosome to subset to based on coords. Default
+#' is NULL so it will return the whole thing.
 #' @param type specifies the file type
 #' @param diagonal specifies which entries to 0 out from the diagonal.
-load_hichip <- function(filename, coords, type='hic-pro', diagonal=3) {
+load_hichip <- function(filename, coords, chrom=NULL,
+                        type='hic-pro', diagonal=3) {
   d <- fread(filename)
   d <- d %>% filter(abs(V2-V1)>diagonal)
   d <- sparseMatrix(i = d$V1, j = d$V2, x = d$V3, dims=c(length(coords),length(coords)))
+  if (!is.null(chrom)) {
+    coords_sub <- coords[seqnames(coords)==chrom,]
+    d <- d[coords_sub$id, coords_sub$id]
+  }
   return(d)
 }
 
@@ -112,24 +143,37 @@ pad_windows <- function(granges, window_size=5e4, bin_size=2500) {
   granges <- trim(granges)
   return(granges)
 }
-normalize_hic <- function(M, sigma=0.2, gamma=1) {
+normalize_hic <- function(M, gamma=1, threshold = 5) {
+  # threshold exists so that low count columns won't get deconvolved 
   M <- as.matrix(M)
-  zero_idx <- which(rowSums(M)==0)
-  if (length(zero_idx)>0) {
-    for (id in zero_idx) {
-      M[id,id] <- 1
+  thresh_idx <- which(colSums(M)<=threshold)
+  if (length(thresh_idx)>0) {
+    for (id in thresh_idx) {
+      M[,id] <- 0 # 0 out the column
+      M[id,id] <- 1 # make the diagonal = 1
     }
   }
-  M <- M+t(M)-diag(diag(M))
-  #Dsmooth <- as.matrix(blur(im(M),sigma=sigma))
   Dsmoothnorm <- sweep(M,2,colSums(M),'/')
   ILD <- (1-gamma)*diag(1,nrow=nrow(Dsmoothnorm))+gamma*Dsmoothnorm
   return(ILD)
 }
 
-fit_decon <- function(reads, D, DF=21) {
-  B <- construct_basis(1:length(reads), df=DF)
-  starting_a <- rep(0, DF)
+fit_decon <- function(reads, D, df=NULL, offset=NULL) {
+  if (is.null(df)) {
+    df <- length(reads)
+  }
+  B <- construct_basis(1:length(reads), df=df)
+  if (is.null(offset)) {
+    starting_a <- rep(0, df)
+  } else {
+    starting_a <- rep(-mean(log(offset)), df)
+  }
+  if (any(offset==0)) {
+    stop('some values of offset are 0; consider omitting or adding 1')
+  }
+  if (!is.null(offset)) {
+    D <- offset*D
+  }
   o <- optim(par=starting_a, loglik, y=reads, D=D, B=B, method='BFGS')
   a <- o$par
   # get hessian
@@ -137,8 +181,7 @@ fit_decon <- function(reads, D, DF=21) {
   Sigma <- solve(psd(H))
   BSigmaB <- B%*%Sigma%*%t(B)
   Bavars <- diag(BSigmaB)
-  estimate <- as.numeric(exp(B%*%a))
-  return(list(a=a, est=as.numeric(B%*%a), vars=Bavars))
+  return(list(a=a, B=B, est=as.numeric(B%*%a), var = Bavars))
 }
 
 decon_to_2d <- function(decon1, decon2, mat) {
@@ -150,7 +193,13 @@ decon_to_2d <- function(decon1, decon2, mat) {
 
 
 # Get gaussian basis functions over an interval (vector)
-construct_basis <- function(interval, df = 10) {
+construct_basis <- function(interval, df = NULL) {
+  if (is.null(df)) {
+    df <- length(interval)
+  }
+  if (df < 3) {
+    stop('Interval and df must be >= 5')
+  }
   range <- diff(range(interval))
   kn <- seq(min(interval) - (range/(df-3))*3, max(interval) + (range/(df))*3, 
             by = range/(df-3))
@@ -161,6 +210,66 @@ construct_basis <- function(interval, df = 10) {
     B[,j] <- exp(-0.5*(interval-myu[j])^2/(h[1]^2))
   }
   return(B)
+}
+
+#' Simulate the log(rate) using a linear combination of Gaussian basis functions
+#' assuming that the coefficients are normally distributed with specified
+#' mean and variance
+simulate_log_rate <- function(len, df, alpha_mean = -1, alpha_sd = 2,
+                              npeaks = NULL) {
+  B <- construct_basis(1:len, df = df)
+  if (is.null(npeaks)) {
+    a <- rnorm(n = df, mean = alpha_mean, sd = alpha_sd)
+  } else {
+    a <- rep(-2, len)
+    peak_locations <- 1+c(1:npeaks)*floor(len/(npeaks+1))
+    a[peak_locations] <- 5
+  }
+  return(list(B = B, a = a))
+}
+
+#' Simulate a convolving matrix that resembles a typical DNA-DNA contact matrix
+#' decay is the ratio between each consecutive diagonal
+#' add_noise is the rate parameter for adding Poisson noise
+#' if tads > 1, adds in equal-length tads by dividing len/tads
+simulate_D <- function(len, decay = 1/3, gamma = 1, add_noise = NULL,
+                       tads = 1, tad_strength = 0.2) {
+  D <- diag(len)
+  for (i in 1:len) {
+    D[row(D) == (col(D)-i)] <- (1/i)*decay
+    D[row(D) == (col(D)+i)] <- (1/i)*decay
+  }
+  if (tads > 1) {
+    tad_size <- floor(len/tads)
+    for (i in 1:tads) {
+      p1 <- (i-1)*tad_size+1
+      p2 <- i*tad_size
+      D[p1:p2,p1:p2] <- D[p1:p2,p1:p2]+tad_strength
+    }
+  }
+  if (!is.null(add_noise)) {
+    if (!is.numeric(add_noise)) {
+      stop('add_noise parameter must be either NULL or a numeric value
+           corresponding to the rate parameter of the poisson noise')
+    }
+    D <- D*add_noise*5
+    D <- D + matrix(rpois(len*len, add_noise), nrow = len, ncol = len)
+  }
+  
+  return(normalize_hic(D, gamma = gamma))
+}
+
+#' Simulate the Poisson-distributed outcome y 
+simulate_y <- function(len, df, D = NULL, alpha_mean = -1, alpha_sd = 2,
+                       decay = 1/3, gamma = 1, npeaks = NULL) {
+  log_rate_params <- simulate_log_rate(len, df, alpha_mean, alpha_sd, npeaks = npeaks)
+  if (is.null(D)) {
+    D <- simulate_D(len, decay, gamma)
+  }
+  B <- log_rate_params$B
+  a <- log_rate_params$a
+  y <- rpois(n = len, lambda = D%*%exp(B%*%a))
+  return(list(y = y, D = D, B = B, a = a))
 }
 
 
@@ -224,6 +333,7 @@ loglik <- function(a, y, D, B) {
   second_term <- sum(DeBa)
   third_term <- sum(lfactorial(y))
   return(-first_term+second_term+third_term)
+  
 }
 ll_negbin <- function(y, mu, theta) {
   return(lgamma(y+theta)-lgamma(theta)-lgamma(y+1)+theta*log(theta)

@@ -1,0 +1,93 @@
+---
+output: html_document
+---
+
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(data.table)
+library(ggthemes)
+library(rtracklayer)
+library(RColorBrewer)
+```
+
+```{r}
+plot_mat <- function(mat, main='') {
+  print(
+    reshape2::melt(as.matrix(mat)) %>%
+      ggplot(aes(x = Var2, y = Var1)) +
+      geom_tile(aes(fill=value),color='grey') +
+      scale_fill_gradient(low='white',high='red') +
+      scale_y_reverse() +
+      theme_classic() +
+      xlab('Anchor 1') +
+      ylab('Anchor 2') + 
+      #annotate("rect", xmin = 9.5, xmax = 12.5, ymin = 9.5, ymax = 12.5, color='blue', lty='dashed', fill=NA) +
+      ggtitle(main)
+  )
+  
+}
+
+
+plot_mat_compare <- function(before, after, main='') {
+  print(
+    reshape2::melt(as.matrix(before)) %>%
+      mutate(type = 'before') %>%
+      bind_rows(reshape2::melt(as.matrix(after)) %>% mutate(type = 'after')) %>%
+      mutate(type = factor(type, levels = c('before', 'after'))) %>%
+      ggplot(aes(x = Var2, y = Var1)) + 
+      geom_tile(aes(fill=value),color='grey') +
+      scale_fill_gradient(low='white',high='red') +
+      scale_y_reverse() +
+      theme_classic() +
+      facet_wrap(type ~ .) +
+      xlab('Anchor 1') +
+      ylab('Anchor 2') + 
+      #annotate("rect", xmin = 9.5, xmax = 12.5, ymin = 9.5, ymax = 12.5, color='blue', lty='dashed', fill=NA) +
+      ggtitle(main)
+  )
+  
+}
+```
+
+
+```{r}
+myfiles <- list.files(pattern = 'gm12878_5000_results_sum_chr.*rds')
+
+for (f in myfiles) {
+  d <- readRDS(f)
+  chr <- unlist(strsplit(unlist(strsplit(f,'_'))[5],'\\.'))[1]
+  plot_mat_compare(d@mat$avg_before, d@mat$avg_after, main = chr)
+}
+```
+
+
+```{r}
+
+```
+
+
+
+```{r}
+before <- NULL
+after <- NULL
+for (f in myfiles) {
+  d <- readRDS(f)
+  chr <- unlist(strsplit(unlist(strsplit(f,'_'))[5],'\\.'))[1]
+  if (is.null(before)) {
+    before <- d@mat$avg_before
+    after <- d@mat$avg_after
+  } else {
+    before <- before+d@mat$avg_before
+    after <- after+d@mat$avg_after
+  }
+}
+plot_mat_compare(before/length(myfiles), after/length(myfiles), main = 'all chrs')
+```
+
+
+
+
+

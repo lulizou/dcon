@@ -1,5 +1,5 @@
 ---
-title: "HiChIP loop strengthening GM12878 cohesin"
+title: "HiChIP loop strengthening K27ac GM12878 and K562"
 output: html_document
 params:
   chrom: 'chr1'
@@ -25,31 +25,40 @@ library(strawr)
 current_chrom <- params$chrom
 RESOLUTION <- 5000
 MIN_DIST <- 20
+
+load_hic <- function(filename, RESOLUTION=5000) {
+  chip.df <- strawr::straw("NONE", filename, gsub('chr','',current_chrom), gsub('chr','',current_chrom), "BP", RESOLUTION)
+  chip.df$x <- chip.df$x/RESOLUTION
+  chip.df$y <- chip.df$y/RESOLUTION
+  chip.df <- chip.df %>% filter(y-x>3)
+  sparseMatrix(i = chip.df$x+1, j = chip.df$y+1, x = chip.df$counts)
+}
 ```
 
 
 ```{r load-data}
 # Load hichip matrices and coordinates
-chip.df <- strawr::straw("NONE", "/rafalab/lzou/hichip_gm12878/GM_HiChIP_cohesin_r1.hic", gsub('chr','',current_chrom), gsub('chr','',current_chrom), "BP", RESOLUTION)
-chip.df$x <- chip.df$x/RESOLUTION
-chip.df$y <- chip.df$y/RESOLUTION
-chip.df <- chip.df %>% filter(y-x>3)
-chip1 <- sparseMatrix(i = chip.df$x+1, j = chip.df$y+1, x = chip.df$counts)
-chip.df <- strawr::straw("NONE", "/rafalab/lzou/hichip_gm12878/GM_HiChIP_cohesin_r2.hic", gsub('chr','',current_chrom), gsub('chr','',current_chrom), "BP", RESOLUTION)
-chip.df$x <- chip.df$x/RESOLUTION
-chip.df$y <- chip.df$y/RESOLUTION
-chip.df <- chip.df %>% filter(y-x>3)
-chip2 <- sparseMatrix(i = chip.df$x+1, j = chip.df$y+1, x = chip.df$counts)
+
+chipG1 <- load_hic("/rafalab/lzou/hichip_gm12878/GSM2705041_GM_HiChIP_H3K27ac_B1.hic")
+chipG2 <- load_hic("/rafalab/lzou/hichip_gm12878/GSM2705042_GM_HiChIP_H3K27ac_B2.hic")
+chipK1 <- load_hic("/rafalab/lzou/hichip_gm12878/GSM2705043_K562_HiChIP_H3K27ac_B1.hic")
+chipK2 <- load_hic("/rafalab/lzou/hichip_gm12878/GSM2705044_K562_HiChIP_H3K27ac_B2.hic")
+chipK3 <- load_hic("/rafalab/lzou/hichip_gm12878/GSM2705045_K562_HiChIP_H3K27ac_B3.hic")
+
 coords <- dcon:::load_coords('/rafalab/lzou/resources/hg19.5kb.windows', type='windows')
 coords <- coords[seqnames(coords)==current_chrom,]
 coords$id <- seq(1,length(coords))
 # Load in HiC matrix
 hic <- strawr::straw("NONE", "/rafalab/lzou/hichip_gm12878/ENCFF718AWL.hic", gsub('chr','',current_chrom), gsub('chr','',current_chrom), "BP", RESOLUTION)
 hic <- bind_rows(hic, hic %>% filter(x!=y) %>% dplyr::rename(y=x, x=y))
-hic <- sparseMatrix(i = hic$x/RESOLUTION+1, j = hic$y/RESOLUTION+1, x = hic$counts, dims=c(length(coords), length(coords)))
+hic <- sparseMatrix(i = hic$x/RESOLUTION+1, j = hic$y/RESOLUTION+1, x = hic$counts)
 # Load in loops
-loops <- fread('/rafalab/lzou/hichip_gm12878/fithichip_gm12878_cohesin_loose.csv')
+loops <- fread('/rafalab/lzou/hichip_gm12878/fithichip_gm12878_h3k27ac_loose.csv') %>% 
+  mutate(origin = 'gm12878') %>%
+  bind_rows(fread('/rafalab/lzou/hichip_gm12878/fithichip_k562_h3k27ac_loose.csv') %>%
+              mutate(origin = 'k562'))
 colnames(loops)[1:5] <- c('chr1','s1','e1','s2','e2')
+loops <- loops %>% distinct(chr1, s1, e1, s2, e2, .keep_all=T)
 loops$s1 <- floor(loops$s1/RESOLUTION)*RESOLUTION
 loops$s2 <- floor(loops$s2/RESOLUTION)*RESOLUTION
 loops$e1 <- floor(loops$e1/RESOLUTION)*RESOLUTION
@@ -63,7 +72,7 @@ loops <- loops %>% filter(bin2-bin1>MIN_DIST)
 ```
 
 ```{r make-dcon-object}
-myDcon <- Dcon(mat = list(gm12878_1=chip1, gm12878_2=chip2),
+myDcon <- Dcon(mat = list(gm12878_1=chipG1, gm12878_2=chipG2, k562_1=chipK1, k562_2=chipK2, k562_3=chipK3),
                coords = coords,
                loops = loops,
                hic = list(hic))
@@ -73,13 +82,13 @@ myDcon
 
 
 ```{r}
-myDconvolved <- dcon::deconvolve(myDcon, gamma=0.5, pad=5, save_mat = F)
+myDconvolved <- dcon::deconvolve(myDcon, df = 11, gamma=0.5, pad=5, pad_center=T)
 ```
 
 
 
 
 ```{r}
-saveRDS(myDconvolved, file=paste0('gm12878_5000_results_gamma0.5_',current_chrom,'.rds'))
+saveRDS(myDconvolved, file=paste0('h3k27ac_results_gamma0.5_',current_chrom,'.rds'))
 ```
 

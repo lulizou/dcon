@@ -1,0 +1,1486 @@
+---
+output: html_document
+---
+
+Identifying H3K27ac loops that are significant after vs. before and seeing
+if they are associated with differentially expressed genes
+
+
+```{r}
+library(data.table)
+library(RColorBrewer)
+library(Matrix)
+library(dplyr)
+library(GenomicRanges)
+library(DESeq2)
+library(ggthemes)
+library(tximport)
+library(readr)
+library(tximportData)
+library(latex2exp)
+library(GGally)
+library(GSA)
+library(stringr)
+```
+
+# LPS141 vs. LPS853
+
+
+```{r load-lps-results}
+myfiles <- list.files(pattern = 'lps_2500_results_g0.8_chr.*rds')
+loops <- NULL
+before <- NULL
+results <- NULL
+after <- NULL
+for (f in myfiles) {
+  d <- readRDS(f)
+  chrom <- unlist(strsplit(unlist(strsplit(f, '_'))[5], '\\.'))[1]
+  if (is.null(loops)) {
+    loops <- d@loops
+  } else {
+    loops <- rbind(loops, d@loops)
+  }
+  if (is.null(before)) {
+    before <- d@results$before
+  } else {
+    before <- rbind(before, d@results$before)
+  }
+  if (is.null(after)) {
+    after <- d@results$after
+  } else {
+    after <- rbind(after, d@results$after)
+  }
+  if (is.null(results)) {
+    results <- d@results$df %>% mutate(chrom=chrom)
+  } else {
+    results <- rbind(results, d@results$df %>% mutate(chrom=chrom))
+  }
+}
+loops$id <- seq(1,nrow(loops))
+loops$strength_before <- rowMeans(before)
+loops <- loops %>% dplyr::distinct(chr1,s1,e1,chr2,s2,e2, .keep_all=T)
+before <- before[loops$id,]
+after <- after[loops$id,]
+```
+
+
+
+## Run DESeq2 before and after
+
+
+```{r run-deseq2-before-after-lps}
+na_idx <- which(rowSums(is.na(before))>0 | rowSums(is.na(after))>0)
+# before
+cts_before <- before[-na_idx,]
+cts_after <- after[-na_idx,]
+loops_subset <- loops[-na_idx,]
+idx_filter_5 <- which(rowSums(cts_before)>=5 & rowSums(cts_after)>=5)
+cts_before <- cts_before[idx_filter_5,]
+cts_after <- cts_after[idx_filter_5,]
+loops_subset <- loops_subset[idx_filter_5,]
+loops_subset$id <- paste(loops_subset$chr1, loops_subset$id, sep='-')
+rownames(cts_before) <- rownames(cts_after) <- loops_subset$id
+colnames(cts_before) <- c('lps141_1','lps141_2','lps853_1','lps853_2')
+coldata <- data.frame(condition = c('lps141','lps141','lps853','lps853'))
+rownames(coldata) <- colnames(cts_before)
+dds <- DESeqDataSetFromMatrix(countData = cts_before, colData = coldata, design = ~ condition)
+dds <- DESeq(dds)
+res_before <- results(dds)
+# after
+colnames(cts_after) <- c('lps141_1','lps141_2','lps853_1','lps853_2')
+coldata <- data.frame(condition = c('lps141','lps141','lps853','lps853'))
+rownames(coldata) <- colnames(cts_after)
+dds <- DESeqDataSetFromMatrix(countData = round(cts_after), colData = coldata, design = ~ condition)
+dds <- DESeq(dds)
+res_after <- results(dds)
+```
+
+
+## Get differentially expressed genes
+
+
+```{r}
+rna141 <- fread('/rafalab/lzou/hichip_lps/rna/lps141_rna_countMatrix.txt')
+rna853 <- fread('/rafalab/lzou/hichip_lps/rna/lps853_rna_countMatrix.txt')
+colnames(rna141)[1] <- colnames(rna853)[1] <- 'gene'
+rna853 <- rna853[rna853$gene %in% rna141$gene]
+rna141 <- rna141[rna141$gene %in% rna853$gene]
+cts <- cbind(rna141[,4:5], rna853[,4:5])
+cts <- data.frame(cts)
+rownames(cts) <- rna141$gene
+colnames(cts) <- c('lps141_1', 'lps141_2', 'lps853_1', 'lps853_2')
+coldata <- data.frame(condition = factor(c('lps141','lps141','lps853','lps853')))
+rownames(coldata) <- colnames(cts)
+dds <- DESeqDataSetFromMatrix(countData = cts, colData = coldata, design = ~ condition)
+dds <- DESeq(dds)
+res <- results(dds)
+```
+
+## Gene expression volcano
+
+```{r}
+data.frame(res) %>%
+  ggplot(aes(x = log2FoldChange, y = -log10(padj))) +
+  geom_point(alpha=0.15) +
+  geom_vline(xintercept=0, lty='dashed', color='grey')+
+  theme_classic() +
+  xlab('log2(FC) gene expr.') +
+  ylab('-log10(p adjusted)') +
+  scale_x_continuous(limits=c(-20,20))
+ggsave('DE-genexpr-lps-volcano-all-genes.pdf', height = 4, width = 4)
+```
+
+
+
+
+```{r gencode-ovl-loops-lps}
+
+# add in the loop log2fc and padj
+loops_subset$loop_log2fc_before <- res_before$log2FoldChange
+loops_subset$loop_log2fc_after <- res_after$log2FoldChange
+loops_subset$loop_se_before<- res_before$lfcSE
+loops_subset$loop_se_after <- res_after$lfcSE
+loops_subset$loop_padj_before <- res_before$padj
+loops_subset$loop_padj_after <- res_after$padj
+
+
+# get gene TSS
+gencode <- import('/rafalab/lzou/resources/gencode.v41.annotation.gtf.gz')
+gencode <- gencode[gencode$type=='gene',]
+gene_df <- data.frame(gene_name = gencode$gene_name, gene_id = gencode$gene_id, strand = strand(gencode),
+                      chrom = seqnames(gencode), start = start(gencode), end = end(gencode))
+gene_df <- gene_df %>%
+  mutate(TSS_start = ifelse(strand == '+', start, end),
+         TSS_end = ifelse(strand=='+', start+1, end-1))
+
+gene_df$gene_id <- gsub('_.*','',gene_df$gene_id)
+
+gene_df <- gene_df %>%
+  filter(gene_name %in% rownames(res))
+# overlap loop start/ends to get ones overlapping TSS
+# get all the gene TSS that touch that loop
+
+# first loop
+ovl <- findOverlaps(
+  loops_subset %>%
+    dplyr::select(chr1, s1, e1) %>% 
+    dplyr::rename(seqnames = chr1, start = s1, end = e1) %>% 
+    makeGRangesFromDataFrame(),
+  gene_df %>% 
+    dplyr::select(chrom, TSS_start, TSS_end) %>% 
+    dplyr::rename(seqnames = chrom, start = TSS_start, end = TSS_end) %>%
+    makeGRangesFromDataFrame()
+) %>% data.frame()
+ovl$log2fc <- res[gene_df$gene_name[ovl$subjectHits],'log2FoldChange']
+ovl$se <- res[gene_df$gene_name[ovl$subjectHits],'lfcSE']
+ovl$padj <- res[gene_df$gene_name[ovl$subjectHits],'padj']
+ovl$gene <- gene_df$gene_name[ovl$subjectHits]
+ovl$strength_before <- loops_subset$strength_before[ovl$queryHits]
+# second loop
+ovl2 <- findOverlaps(
+  loops_subset %>%
+    dplyr::select(chr2, s2, e2) %>% 
+    dplyr::rename(seqnames = chr2, start = s2, end = e2) %>% 
+    makeGRangesFromDataFrame(),
+  gene_df %>% 
+    dplyr::select(chrom, TSS_start, TSS_end) %>% 
+    dplyr::rename(seqnames = chrom, start = TSS_start, end = TSS_end) %>%
+    makeGRangesFromDataFrame()
+) %>% data.frame()
+ovl2$log2fc <- res[gene_df$gene_name[ovl2$subjectHits],'log2FoldChange']
+ovl2$se <- res[gene_df$gene_name[ovl2$subjectHits],'lfcSE']
+ovl2$padj <- res[gene_df$gene_name[ovl2$subjectHits],'padj']
+ovl2$gene <- gene_df$gene_name[ovl2$subjectHits]
+ovl2$strength_before <- loops_subset$strength_before[ovl2$queryHits]
+
+ovl <- bind_rows(ovl, ovl2)
+ovl$loop_log2fc_before <- loops_subset$loop_log2fc_before[ovl$queryHits]
+ovl$loop_log2fc_after <- loops_subset$loop_log2fc_after[ovl$queryHits]
+ovl$loop_se_before <- loops_subset$loop_se_before[ovl$queryHits]
+ovl$loop_se_after <- loops_subset$loop_se_after[ovl$queryHits]
+ovl$loop_padj_before <- loops_subset$loop_padj_before[ovl$queryHits]
+ovl$loop_padj_after <- loops_subset$loop_padj_after[ovl$queryHits]
+
+onetoone <- ovl %>%
+  group_by(queryHits) %>%
+  summarise(npos = sum(log2fc>0), nneg = sum(log2fc<0)) %>%
+  filter(npos==0 | nneg==0) %>%
+  pull(queryHits)
+
+```
+
+
+### Before
+
+```{r}
+ovl %>%
+  filter(queryHits %in% onetoone) %>%
+  group_by(queryHits) %>%
+  summarise(log2fc = mean(log2fc), loop_log2fc_before = loop_log2fc_before, loop_log2fc_after = loop_log2fc_after, loop_padj_before = loop_padj_before) %>%
+  ggplot(aes(x = loop_log2fc_before, y = ifelse(-log10(loop_padj_before)>10, 10, -log10(loop_padj_before)))) +
+  geom_point(aes(color = log2fc)) +
+  geom_vline(xintercept = 0, lty='dashed', color='grey') +
+  geom_hline(yintercept=3, lty='dashed', color='red') +
+  scale_color_gradient2(name='log2(FC) gene expr.', low = 'blue', high = 'red', midpoint = 0, mid='grey88') +
+  theme_classic() +
+  xlab('log2(FC) loop strength, before') +
+  ylab('-log10(p adjusted)') +
+  coord_cartesian(ylim=c(0,10), xlim=c(-10,10))
+ggsave('DE-h3k27ac-LPS-volcano-before.pdf', height = 4, width = 5)
+```
+
+### Arrow to after
+
+```{r}
+ovl %>%
+  filter(queryHits %in% onetoone) %>%
+  group_by(queryHits) %>%
+  summarise(log2fc = mean(log2fc), loop_log2fc_before = loop_log2fc_before, loop_log2fc_after = loop_log2fc_after, loop_padj_before = loop_padj_before, loop_padj_after = loop_padj_after) %>%
+  mutate(loop_padj_before = ifelse(-log10(loop_padj_before)>10, 10, -log10(loop_padj_before)),
+         loop_padj_after = ifelse(-log10(loop_padj_after)>10, 10, -log10(loop_padj_after))) %>%
+  ggplot() +
+  geom_segment(aes(x = loop_log2fc_before, xend = loop_log2fc_after,
+                   y = loop_padj_before, yend = loop_padj_after, color = log2fc),
+               arrow = arrow(length = unit(0.1,"cm"))) +
+  geom_vline(xintercept = 0, lty='dashed', color='grey') +
+  geom_hline(yintercept=3, lty='dashed', color='red') +
+  scale_color_gradient2(name='log2(FC) gene expr.', low = 'blue', high = 'red', midpoint = 0, mid='grey88') +
+  theme_classic() +
+  xlab('log2(FC) loop strength, before') +
+  ylab('-log10(p adjusted)') +
+  coord_cartesian(ylim=c(0,10), xlim=c(-10,10))
+ggsave('DE-h3k27ac-LPS-volcano-arrow.pdf', height=4, width=5)
+```
+
+
+### After
+
+```{r}
+ovl %>%
+  filter(queryHits %in% onetoone) %>%
+  group_by(queryHits) %>%
+  summarise(log2fc = mean(log2fc), loop_log2fc_before = loop_log2fc_before, loop_log2fc_after = loop_log2fc_after, loop_padj_after = loop_padj_after) %>%
+  ggplot(aes(x = loop_log2fc_after, y = ifelse(-log10(loop_padj_after)>10, 10, -log10(loop_padj_after)))) +
+  geom_point(aes(color = log2fc)) +
+  geom_vline(xintercept = 0, lty='dashed', color='grey') +
+  geom_hline(yintercept=3, lty='dashed', color='red') +
+  scale_color_gradient2(name='log2(FC) gene expr.', low = 'blue', high = 'red', midpoint = 0, mid='grey88') +
+  theme_classic() +
+  xlab('log2(FC) loop strength, after') +
+  ylab('-log10(p adjusted)') +
+  coord_cartesian(ylim=c(0,10), xlim=c(-10,10))
+ggsave('DE-h3k27ac-LPS-volcano-after.pdf', height = 4, width = 5)
+```
+
+
+
+
+
+
+```{r}
+ovl %>%
+  filter(queryHits %in% onetoone) %>%
+  group_by(queryHits) %>%
+  summarise(log2fc = mean(log2fc), loop_log2fc_before = loop_log2fc_before, loop_log2fc_after = loop_log2fc_after, loop_padj_before = loop_padj_before, loop_padj_after = loop_padj_after, strength_before = strength_before) %>%
+  ungroup() %>%
+  mutate(strength_bin = cut_number(strength_before, 5)) %>%
+  group_by(strength_bin) %>%
+  summarise(cor_before = cor(log2fc, loop_log2fc_before), cor_after = cor(log2fc, loop_log2fc_after), count=n(), n_sig_before = sum((log2fc>2 & loop_log2fc_before>2)|(log2fc< -2 & loop_log2fc_before < -2)), n_sig_after = sum((log2fc>2 & loop_log2fc_after>2)|(log2fc < -2 & loop_log2fc_after < -2))) 
+```
+
+
+```{r}
+ovl %>%
+  filter(queryHits %in% onetoone) %>%
+  group_by(subjectHits) %>%
+  summarise(log2fc = mean(log2fc), loop_log2fc_before = mean(loop_log2fc_before), loop_log2fc_after = mean(loop_log2fc_after), strength_before = mean(strength_before)) %>%
+  ungroup() %>%
+  mutate(strength_bin = cut(strength_before, breaks=c(1,2,3,5,106), labels = c('1-2','2-3','3-5','5+'))) %>%
+  group_by(strength_bin) %>%
+  summarise(cor_before = cor(log2fc, loop_log2fc_before), cor_after = cor(log2fc, loop_log2fc_after), count=n(), n_sig_before = sum((log2fc>2 & loop_log2fc_before>2)|(log2fc< -2 & loop_log2fc_before < -2)), n_sig_after = sum((log2fc>2 & loop_log2fc_after>2)|(log2fc < -2 & loop_log2fc_after < -2))) 
+```
+
+
+
+
+## Violins
+
+```{r}
+dd <- ovl %>%
+  filter(queryHits %in% onetoone) %>%
+  group_by(queryHits) %>%
+  summarise(log2fc = mean(log2fc), loop_log2fc_before = loop_log2fc_before, loop_log2fc_after = loop_log2fc_after, loop_padj_after = loop_padj_after, strength_before = strength_before) %>%
+  ungroup() %>%
+  mutate(strength_bin = cut(strength_before, breaks=c(1,5,106), labels=c('1-5','>5'))) %>%
+  mutate(loop_log2fc_before_bin = cut(loop_log2fc_before, breaks=c(-9,-4,-1,1,4,9))) 
+
+mylabs <- dd %>%
+  group_by(loop_log2fc_before_bin) %>%
+  summarise(count=n())
+mylabs <- paste0(mylabs$loop_log2fc_before_bin, '\nn=', prettyNum(mylabs$count, big.mark=','))
+
+dd %>%
+  ggplot(aes(x = loop_log2fc_before_bin, y = (loop_log2fc_after-loop_log2fc_before))) +
+  geom_violin(aes(fill=strength_bin), draw_quantiles = 0.5, scale='width') +
+  geom_hline(yintercept=0, lty='dashed', color='red')+
+  scale_fill_manual(name='Avg. loop strength\nbefore',
+                    breaks = c('1-5','>5'),
+                    values = c('#86d780','#007882')) +
+  scale_x_discrete(labels = mylabs) +
+  theme_classic() +
+  xlab('Avg. loop strength, before') +
+  ylab('log2(FC) loop strength, after-before')
+ggsave('DE-LPS-violins-v3.pdf', height=4, width=6)
+```
+
+
+```{r}
+hist(ovl$strength_before, breaks=45)
+```
+
+
+## Correlation before after
+
+```{r}
+dd <- ovl %>%
+  filter(queryHits %in% onetoone) %>%
+  # group_by(queryHits) %>%
+  # summarise(log2fc = mean(log2fc), loop_log2fc_before = loop_log2fc_before, loop_log2fc_after = loop_log2fc_after, loop_padj_after = loop_padj_after, strength_before = strength_before) %>%
+  group_by(subjectHits) %>%
+  summarise(log2fc = mean(log2fc), loop_log2fc_before = mean(loop_log2fc_before), loop_log2fc_after = mean(loop_log2fc_after),  strength_before = mean(strength_before) ) %>%
+  ungroup() %>%
+  mutate(strength_bin = cut(strength_before, breaks=c(1,2,3,5,106), labels = c('1-2', '2-3', '3-5', '>5'))) %>%
+  mutate(loop_log2fc_before_bin = cut(loop_log2fc_before, breaks=c(-9,-4,-1,1,4,9))) %>%
+  group_by(strength_bin) %>%
+  summarise(cor_before = cor(log2fc, loop_log2fc_before), cor_after = cor(log2fc, loop_log2fc_after),
+            n = n())
+
+dd %>%
+  pivot_longer(cols = c(cor_before, cor_after), names_to = 'dcon', values_to = 'cor') %>%
+  ggplot(aes(x = strength_bin, y = cor)) +
+  geom_point(aes(color = dcon)) +
+  geom_line(aes(color = dcon, group=dcon)) +
+  scale_color_tableau(palette = 'Purple-Pink-Gray', name='', breaks = c('cor_before', 'cor_after'), labels = c('Before','After')) +
+  scale_x_discrete(breaks = dd$strength_bin, labels = paste0(dd$strength_bin,'\nn=',prettyNum(dd$n, big.mark = ','))) +
+  theme_classic() +
+  xlab('Avg. loop strength before') +
+  ylab('Correlation between avg. log2(FC) loop\nand log2(FC) gene expr.')
+ggsave('DE-LPS-cor.pdf', height=4, width=5)
+```
+
+
+```{r}
+dd <- ovl %>%
+  filter(queryHits %in% onetoone) %>%
+  group_by(queryHits) %>%
+  summarise(log2fc = mean(log2fc), loop_log2fc_before = loop_log2fc_before, loop_log2fc_after = loop_log2fc_after, loop_padj_after = loop_padj_after, strength_before = strength_before) %>%
+  ungroup() %>%
+  mutate(strength_bin = cut(strength_before, breaks=c(1,2,3,5,10,106))) %>%
+  mutate(loop_log2fc_before_bin = cut(loop_log2fc_before, breaks=c(-9,-4,-1,1,4,9))) %>%
+  group_by(strength_bin) %>%
+  summarise(cor_before = cor(log2fc, loop_log2fc_before), cor_after = cor(log2fc, loop_log2fc_after),
+            n = n(), frac_sig_before = sum((log2fc>2 & loop_log2fc_before>2)|(log2fc< -2 & loop_log2fc_before < -2)), frac_sig_after = sum((log2fc>2 & loop_log2fc_after>2)|(log2fc < -2 & loop_log2fc_after < -2)))
+
+dd %>%
+  pivot_longer(cols = c(frac_sig_before, frac_sig_after), names_to = 'dcon', values_to = 'sig') %>%
+  ggplot(aes(x = strength_bin, y = sig)) +
+  geom_point(aes(color = dcon)) +
+  geom_line(aes(color = dcon, group=dcon)) +
+  scale_color_tableau(palette = 'Purple-Pink-Gray', name='', breaks = c('frac_sig_before', 'frac_sig_after'), labels = c('Before','After')) +
+  scale_x_discrete(breaks = dd$strength_bin, labels = paste0(dd$strength_bin,'\nn=',prettyNum(dd$n, big.mark = ','))) +
+  theme_classic() +
+  xlab('Avg. loop strength before') +
+  ylab('Number of loops with sig. genes')
+ggsave('DE-LPS-sig.pdf', height=4, width=5)
+```
+
+
+
+
+## Differential GO term enrichment
+
+
+```{r}
+gene_sets <- GSA.read.gmt('h.all.v2022.1.Hs.symbols.gmt')
+gene_set_names <- gene_sets$geneset.names
+gene_set_descriptions <- gene_sets$geneset.descriptions
+gene_sets <- gene_sets$genesets
+names(gene_sets) <- gene_set_names
+n_sets <- length(gene_sets)
+```
+
+
+```{r}
+dd <- ovl %>%
+  group_by(gene) %>%
+  summarise(log2fc = mean(log2fc), z_before = mean(loop_log2fc_before/loop_se_before), z_after = mean(loop_log2fc_after/loop_se_after), loop_before = mean(loop_log2fc_before), loop_after = mean(loop_log2fc_after))
+gene_info <- as.data.frame(dd)
+rownames(gene_info) <- gene_info$gene
+```
+
+
+```{r}
+set.seed(1)
+NUM_GENE_THRESH <- 2
+Q_THRESH <- 0.1
+N_samp <- 100000
+log_fc_thresh <- 0.5
+data_res <- matrix(NA, n_sets, 3)
+
+for(i in 1:n_sets) {
+  my_genes <- gene_info[(gene_info$gene%in% gene_sets[[i]]) & (abs(gene_info$log2fc) > log_fc_thresh), 'gene']
+  my_Z <- gene_info[my_genes, 'loop_before']
+  Z_mean <- mean(my_Z)
+  n <- length(my_Z)
+  my_genes <- gene_info[(gene_info$gene%in% Reduce(union, gene_sets)) & (abs(gene_info$log2fc) > log_fc_thresh), 'gene']
+  my_Z <- gene_info[my_genes, 'loop_before']
+  sample_res <- numeric(N_samp)
+  for(j in 1:N_samp)
+    sample_res[j] <- mean(sample(my_Z, n))
+  if(n > 0) {
+    if(Z_mean > 0)
+      p_val <- mean(Z_mean < sample_res)*2
+    else
+      p_val <- mean(Z_mean > sample_res)*2
+  } else {
+    p_val <- 1
+    Z_mean <- 0
+  }
+  
+  data_res[i,] <- c(n, p_val, Z_mean)
+}
+rownames(data_res) <- gene_set_names
+results_before <- data_res
+data_res %>% as.data.frame() %>% arrange(V2)
+```
+
+```{r}
+set.seed(1)
+NUM_GENE_THRESH <- 2
+Q_THRESH <- 0.1
+N_samp <- 100000
+log_fc_thresh <- 0.5
+data_res <- matrix(NA, n_sets, 3)
+
+for(i in 1:n_sets) {
+  my_genes <- gene_info[(gene_info$gene%in% gene_sets[[i]]) & (abs(gene_info$log2fc) > log_fc_thresh), 'gene']
+  my_Z <- gene_info[my_genes, 'loop_after']
+  Z_mean <- mean(my_Z)
+  n <- length(my_Z)
+  my_genes <- gene_info[(gene_info$gene%in% Reduce(union, gene_sets)) & (abs(gene_info$log2fc) > log_fc_thresh), 'gene']
+  my_Z <- gene_info[my_genes, 'loop_after']
+  sample_res <- numeric(N_samp)
+  for(j in 1:N_samp)
+    sample_res[j] <- mean(sample(my_Z, n))
+  if(n > 0) {
+    if(Z_mean > 0)
+      p_val <- mean(Z_mean < sample_res)*2
+    else
+      p_val <- mean(Z_mean > sample_res)*2
+  } else {
+    p_val <- 1
+    Z_mean <- 0
+  }
+  
+  data_res[i,] <- c(n, p_val, Z_mean)
+}
+rownames(data_res) <- gene_set_names
+results_after <- data_res
+data_res %>% as.data.frame() %>% arrange(V2)
+```
+
+
+## Visualize GO terms before/after
+
+
+```{r}
+res_before <- as.data.frame(results_before)
+res_after <- as.data.frame(results_after)
+colnames(res_before) <- colnames(res_after) <- c('n genes', 'pval', 'log2(FC) loop')
+res_before$pathway <- rownames(res_before)
+res_after$pathway <- rownames(res_after)
+rownames(res_before) <- rownames(res_after) <- NULL
+
+res_before <- res_before %>% 
+  mutate(Deconvolution = 'Before') %>% 
+  arrange(pval) %>% slice(1:10)
+res_after <- res_after %>% 
+  mutate(Deconvolution = 'After') %>% 
+  arrange(pval) %>% slice(1:10) %>%
+  filter(pathway %in% res_before$pathway)
+res_before <- res_before %>%
+  filter(pathway %in% res_after$pathway)
+dd <- bind_rows(res_before, res_after) 
+dd$pathway <- gsub('HALLMARK','',dd$pathway)
+dd$pathway <- gsub('PATHWAY','',dd$pathway)
+dd$pathway <- gsub('_', ' ', dd$pathway)
+dd$pathway <- str_to_title(dd$pathway)
+dd$Deconvolution <- factor(dd$Deconvolution, levels = c('Before', 'After'))
+
+dd$pathway <- factor(dd$pathway, levels = dd %>% group_by(pathway) %>% summarise(p=mean(pval)) %>% arrange(desc(p)) %>% pull(pathway))
+
+pal <- brewer.pal(11, 'PiYG')
+dd %>%
+  filter(!grepl('Pancreas', pathway)) %>% # only has 3 genes
+  ggplot(aes(x = pval, y = pathway)) +
+  geom_point(aes(size = `n genes`, color = `log2(FC) loop`, shape = Deconvolution)) +
+  scale_color_gradient2(name='Avg. log2(FC) loop',high=pal[1], low=pal[11], mid=pal[6],midpoint=0) +
+  theme_classic() +
+  geom_vline(xintercept=0.05, lty='dashed', color='red') +
+  ylab('Hallmark Pathway') +
+  xlab('p value')
+
+ggsave('DE-hallmarks.pdf', height=4.5, width=6.5)
+```
+
+
+## Looping plot
+
+### p-value for P53
+
+```{r}
+dd %>%
+  filter(grepl('P53', pathway))
+```
+
+### Genes in P53 pathway
+
+```{r}
+gene_sets$HALLMARK_P53_PATHWAY
+```
+
+### Gene info
+
+```{r}
+gene_info %>%
+  filter(gene %in% gene_sets$HALLMARK_P53_PATHWAY) %>%
+  ggplot(aes(x = loop_before, y = loop_after)) +
+  geom_point() +
+  geom_text(aes(label=gene),nudge_y=-0.1) +
+  theme_classic() +
+  geom_abline(slope=1, intercept=0, lty='dashed', color = 'red') +
+  xlab('Avg. loop log2(FC) before') +
+  ylab('Avg. loop log2(FC) after')
+ggsave('DE-hallmark-genes-before-after-y-x.pdf', height=5, width=5)
+```
+
+
+
+```{r}
+gene_info %>%
+  filter(gene %in% gene_sets$HALLMARK_HEDGEHOG_SIGNALING) %>%
+  ggplot(aes(x = loop_before, y = loop_after)) +
+  geom_point() +
+  geom_text(aes(label=gene),nudge_y=-0.1) +
+  theme_classic() +
+  geom_abline(slope=1, intercept=0, lty='dashed', color = 'red') +
+  xlab('Avg. loop log2(FC) before') +
+  ylab('Avg. loop log2(FC) after')
+ggsave('DE-hallmark-hedgehog-genes-before-after-y-x.pdf', height=5, width=5)
+```
+
+
+### ZNF365
+
+Implicated in sarcoma risk https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5915097/ 
+
+
+```{r}
+ovl %>%
+  filter(gene %in% gene_sets$HALLMARK_P53_PATHWAY)
+```
+
+
+```{r}
+ovl %>%
+  filter(gene == 'SEC61A1')
+```
+
+```{r}
+ovl %>%
+  filter(gene == 'PTPRE')
+```
+
+```{r}
+# load in cis-reg elements
+ccres <- fread('hg38_encode_ccres.bed')
+colnames(ccres)[1] <- 'chrom'
+```
+
+
+
+```{r}
+make_loop_plot <- function(g, filter.genes = NULL, jitter.text = F, jitter.seed = 1, before.start=5e3, increment=1e5) {
+  pal <- brewer.pal(11, 'PiYG')
+  dd <- ovl %>%
+    filter(gene == g)
+  ll <- loops_subset[dd$queryHits,]
+  # get the range of genes to include
+  goi <- gencode[gencode$type=='gene' & gencode$gene_name == g]
+  chrom <- as.character(seqnames(goi))
+  range_start <- min(c(ll$s1, ll$s2)) 
+  range_end <- max(c(ll$e1, ll$e2))
+  breaks <- seq(range_start, range_end, by=increment)
+  labels <- paste0(breaks/1e6)
+  gg <- gencode[seqnames(gencode) == chrom & gencode$type == 'gene' & start(ranges(gencode)) >= range_start & end(ranges(gencode)) <= range_end]
+  gg <- data.frame(gg)
+  gg <- gg %>% filter(!grepl('ENS', gene_name))
+  if (!is.null(filter.genes)) {
+    gg <- gg %>% filter(gene_name %in% c(g, filter.genes))
+  }
+  cs <- ccres %>% filter(chrom == as.character(seqnames(goi)), chromStart >= range_start, chromEnd <= range_end)
+  # include genes
+  g <- ll %>%
+    ggplot() +
+    geom_hline(yintercept=0) 
+  if (jitter.text) {
+    g <- g + 
+      geom_segment(data = gg, aes(x = start, xend = end, y = 0, yend = 0), size=4, color='#0057e5', position = position_jitter(height = 0.05, seed=jitter.seed)) 
+  } else {
+    g <- g + geom_segment(data = gg, aes(x = start, xend = end, y = 0, yend = 0), size=4, color='#0057e5') 
+  }
+  g <- g +
+    geom_curve(aes(x = (s1+e1)/2, xend = (s2+e2)/2, y = 0, yend = 0, color = loop_log2fc_after), curvature=0.5) +
+    geom_curve(aes(x = (s1+e1)/2, xend = (s2+e2)/2, y = 0, yend = 0, color = loop_log2fc_before), curvature=-0.5) +
+    geom_segment(data = cs %>% filter(ucscLabel=='prom'), aes(x = chromStart, xend = chromEnd, y = 0, yend = 0), color = rgb(255,0,0, maxColorValue=255), size=4) +
+    geom_segment(data = cs %>% filter(ucscLabel=='enhP'), aes(x = chromStart, xend = chromEnd, y = 0, yend = 0), color = rgb(255,167,0, maxColorValue=255), size=4) +
+    geom_segment(data = cs %>% filter(ucscLabel=='enhD'), aes(x = chromStart, xend = chromEnd, y = 0, yend = 0), color = rgb(255,205,0, maxColorValue=255), size=4) +
+    scale_color_gradient2(name='log2(FC) loop',high=pal[1], low=pal[11], mid=pal[6],midpoint=0) +
+    scale_x_continuous(breaks = breaks, labels = labels) +
+    annotate('text', x = range_start+before.start, y = 0.05, label = 'Before') +
+    annotate('text', x = range_start, y = -0.05, label = 'After') +
+    theme_classic() +
+    theme(axis.line.y = element_blank(), axis.text.y = element_blank(), axis.ticks.y = element_blank()) + 
+    ylim(c(-0.1,0.1)) +
+    ylab('') +
+    xlab(paste('position along', chrom, '(mb)'))
+  if (jitter.text) {
+    g <- g +
+      geom_text(data = gg, aes(x = (start+end)/2, y = -0.01, label = gene_name), position = position_jitter(height = 0.05, seed=jitter.seed)) 
+  } else {
+    g <- g + geom_text(data = gg, aes(x = (start+end)/2, y = -0.01, label = gene_name))
+  }
+  print(g)
+}
+```
+
+```{r}
+make_loop_plot('PTPRE', before.start=5e3)
+ggsave('DE-loop_PTPRE.pdf', height=3, width=5)
+```
+
+```{r}
+make_loop_plot('SEC61A1', filter.genes = c('RUVBL1', 'EEFSEC', 'MGLL', 'PODXL2', 'MCM2', 'TPRA1', 'GATA2', 'RPN1', 'LINC01565', 'LOC90246'), jitter.text=T, jitter.seed=69, before.start = 25e3, increment = 2.5e5)
+ggsave('DE-loop_SEC61A1.pdf', height=3, width=5)
+```
+
+
+
+# Old analyses
+
+
+```{r}
+dd <- ovl %>%
+  filter(queryHits %in% onetoone) %>%
+  group_by(queryHits) %>%
+  summarise(log2fc = mean(log2fc), loop_log2fc_before = loop_log2fc_before, loop_log2fc_after = loop_log2fc_after, loop_padj_after = loop_padj_after, strength_before = strength_before) %>%
+  ungroup() %>%
+  mutate(strength_bin = cut(strength_before, breaks=c(1,3,5,10,106), labels = c('1-3','3-5','5-10','10+'))) %>%
+  mutate(loop_log2fc_before_bin = cut(loop_log2fc_before, breaks=c(-9,-4,-1,1,4,9))) %>%
+  group_by(strength_bin) %>%
+  summarise(cor_before = cor(log2fc, loop_log2fc_before), cor_after = cor(log2fc, loop_log2fc_after),
+            n = n())
+
+dd %>%
+  pivot_longer(cols = c(cor_before, cor_after), names_to = 'dcon', values_to = 'cor') %>%
+  ggplot(aes(x = strength_bin, y = cor)) +
+  geom_point(aes(color = dcon)) +
+  geom_line(aes(color = dcon, group=dcon)) +
+  scale_color_tableau(palette = 'Purple-Pink-Gray', name='', breaks = c('cor_before', 'cor_after'), labels = c('Before','After')) +
+  scale_x_discrete(breaks = dd$strength_bin, labels = paste0(dd$strength_bin,'\nn=',prettyNum(dd$n, big.mark = ','))) +
+  theme_classic() +
+  xlab('Avg. loop strength before') +
+  ylab('Correlation between log2(FC) loop\n and log2(FC) gene expr.')
+ggsave('DE-LPS-NGENES.pdf', height=4, width=5)
+```
+
+
+## Violin
+
+
+```{r}
+dd <- ovl %>%
+  filter(queryHits %in% onetoone) %>%
+  group_by(queryHits) %>%
+  summarise(log2fc = mean(log2fc), loop_log2fc_before = loop_log2fc_before, loop_log2fc_after = loop_log2fc_after) %>%
+  ungroup() %>%
+  mutate(loop_log2fc_diff = loop_log2fc_after-loop_log2fc_before) %>%
+  mutate(loop_log2fc_before_bin = cut(loop_log2fc_before, breaks=c(-9, -5, -3, -1, 1, 3, 5,9)))  
+
+dd_colors <- dd %>%
+  group_by(loop_log2fc_before_bin) %>%
+  summarise(color = mean(log2fc))
+
+dd_label <- dd %>%
+  group_by(loop_log2fc_before_bin) %>%
+  summarise(count = n()) %>%
+  mutate(label = paste0(loop_log2fc_before_bin, '\nn=',prettyNum(count,big.mark=','))) %>%
+  pull(label)
+
+dd %>%
+  left_join(dd_colors) %>%
+  ggplot(aes(x = loop_log2fc_before_bin, y = loop_log2fc_diff)) +
+  geom_violin(aes(fill=color),draw_quantiles = 0.5) +
+  geom_hline(yintercept=0, lty='dashed', color = 'red') +
+  scale_fill_gradient2(name='Mean log2(FC)\ngene expr.', low = 'blue', high = 'red', midpoint = 0, mid='grey88',
+                       limits = c(-4,2.5)) +
+  scale_x_discrete(breaks = levels(dd_colors$loop_log2fc_before_bin), labels = dd_label) +
+  theme_classic() +
+  theme(legend.position = 'right')+ 
+  coord_cartesian(ylim=c(-5,5)) +
+  xlab('log2(FC) loop strength, before') +
+  ylab('log2(FC) loop strength, after-before')
+ggsave('DE-violin-LPS.pdf', height=4, width=6)
+```
+
+
+```{r}
+# get genes associated with newly significant loops
+dd <- ovl %>%
+  filter(queryHits %in% onetoone) %>%
+  group_by(queryHits) %>%
+  summarise(log2fc = mean(log2fc), loop_padj_before = loop_padj_before, loop_padj_after = loop_padj_after) %>%
+  ungroup() %>%
+  mutate(loop_sig = case_when(
+    loop_padj_before <= 0.001 & loop_padj_after <= 0.001 ~ 'Stays\nsignificant',
+    loop_padj_before > 0.001 & loop_padj_after <= 0.001 ~ 'Newly\nsignificant',
+    loop_padj_before <= 0.001 & loop_padj_after > 0.001 ~ 'No longer\nsignificant',
+    TRUE ~ 'Not\nsignificant'
+  )) %>%
+  mutate(loop_sig = factor(loop_sig, levels =  c('Not\nsignificant', 'No longer\nsignificant', 'Newly\nsignificant', 'Stays\nsignificant')))
+
+dd_label <- dd %>%
+  group_by(loop_sig) %>%
+  summarise(count = n()) %>%
+  mutate(label = paste0(loop_sig, '\nn=',prettyNum(count,big.mark=','))) %>%
+  pull(label)
+
+dd %>%
+  ggplot(aes(x = loop_sig, y = abs(log2fc))) +
+  geom_boxplot() +
+  scale_x_discrete(breaks = c('Not\nsignificant', 'No longer\nsignificant', 'Newly\nsignificant', 'Stays\nsignificant'),
+                   labels = dd_label) +
+  theme_classic() +
+  xlab('Loop significance after') +
+  ylab('Absolute log2(FC) gene expr.')
+ggsave('DE-LPS-boxplots.pdf', height=4, width=4)
+```
+
+
+```{r}
+# get the genes associated with newly significant and stays significant loops
+# for lps141 and lps853 separately
+
+no_longer_sig <- dd %>%
+  filter(loop_sig == 'No longer\nsignificant') %>%
+  pull(queryHits)
+
+newly_sig <- dd %>%
+  filter(loop_sig == 'Newly\nsignificant') %>%
+  pull(queryHits)
+
+stay_sig <- dd %>%
+  filter(loop_sig == 'Stays\nsignificant') %>%
+  pull(queryHits)
+
+not_sig <- dd %>%
+  filter(loop_sig == 'Not\nsignificant') %>%
+  pull(queryHits)
+
+genes_lps853_not <- ovl %>%
+  filter(queryHits %in% not_sig) %>%
+  filter(log2fc > 0) 
+
+genes_lps853_no_longer <- ovl %>%
+  filter(queryHits %in% no_longer_sig) %>%
+  filter(log2fc > 0) 
+
+genes_lps853_new <- ovl %>%
+  filter(queryHits %in% newly_sig) %>%
+  filter(log2fc > 0) 
+
+genes_lps853_stay <- ovl %>%
+  filter(queryHits %in% stay_sig) %>%
+  filter(log2fc > 0) 
+
+genes_lps141_no_longer <- ovl %>%
+  filter(queryHits %in% no_longer_sig) %>%
+  filter(log2fc < 0) 
+
+genes_lps141_not <- ovl %>%
+  filter(queryHits %in% not_sig) %>%
+  filter(log2fc < 0) 
+
+genes_lps141_new <- ovl %>%
+  filter(queryHits %in% newly_sig) %>%
+  filter(log2fc < 0)
+
+genes_lps141_stay <- ovl %>%
+  filter(queryHits %in% stay_sig) %>%
+  filter(log2fc < 0) 
+```
+
+
+## Bar charts of significance
+
+```{r}
+dd %>%
+  mutate(padj_before = case_when(
+    loop_padj_before <= 1e-4 ~ '<=1e-4',
+    loop_padj_before > 1e-4 & loop_padj_before <= 1e-2 ~ '(1e-4,1e-2]',
+    loop_padj_before > 1e-2 & loop_padj_before <= 1e-1 ~ '(1e-2,1e-1]',
+    TRUE ~ '>1e-1'
+  )) %>%
+  mutate(padj_after = case_when(
+    loop_padj_after <= 1e-4 ~ '<=1e-4',
+    loop_padj_after > 1e-4 & loop_padj_after <= 1e-2 ~ '(1e-4,1e-2]',
+    loop_padj_after > 1e-2 & loop_padj_after <= 1e-1 ~ '(1e-2,1e-1]',
+    TRUE ~ '>1e-1'
+  )) %>%
+  mutate(padj_before = factor(padj_before, levels = (c('<=1e-4','(1e-4,1e-2]','(1e-2,1e-1]','>1e-1'))),
+         padj_after = factor(padj_after, (c('<=1e-4','(1e-4,1e-2]','(1e-2,1e-1]','>1e-1')))) %>%
+  group_by(padj_before, padj_after) %>%
+  summarise(count=n()) %>%
+  filter(padj_before != '>1e-1') %>%
+  ggplot(aes(x = padj_before, y = count)) +
+  geom_bar(aes(fill=padj_after),stat='identity',color='black') +
+  scale_fill_viridis(name='p adjusted, after',discrete=T, direction=-1) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle=45, hjust=1),
+        legend.position='none')+
+  xlab('p adjusted, before') +
+  ylab('Number of loops')
+ggsave('DE-bar-LPS-filter.pdf', height=2, width=1.25)
+```
+
+
+## Genes
+
+
+
+
+
+## Plot log2fc before vs. after
+
+```{r}
+data.frame(log2fc_before = res_before$log2FoldChange, 
+           log2fc_after = res_after$log2FoldChange,
+           padj_before = res_before$padj,
+           padj_after = res_after$padj) %>%
+  mutate(label = case_when(
+    padj_before < 0.01 & padj_after < 0.01 ~ 'Stays significant',
+    padj_before < 0.01 & padj_after > 0.1 ~ 'No longer significant',
+    padj_before > 0.1 & padj_after < 0.01 ~ 'Newly significant',
+    TRUE ~ 'not significant'
+  )) %>%
+  mutate(label = factor(label, levels = c('not significant', 'Stays significant', 'Newly significant', 'No longer significant'))) %>%
+  mutate(alpha = ifelse(label == 'not significant', 0.01, 0.75)) %>%
+  mutate(color = case_when(
+    label == 'not significant' ~ 'grey',
+    label == 'Stays significant' ~ 'black', 
+    label == 'Newly significant' ~ 'red',
+    label == 'No longer significant' ~ 'blue'
+  )) %>%
+  filter(label != 'not significant') %>%
+  ggplot(aes(x = log2fc_before, y = log2fc_after)) +
+  geom_point(aes(color = color, alpha=alpha)) +
+  scale_color_identity(guide = 'legend',
+                       name = '',
+                       breaks = c('grey', 'black', 'red', 'blue'),
+                       labels = c('not significant', 'Stays significant', 'Newly significant', 'No longer significant')) +
+  scale_alpha_identity() +
+  theme_classic() +
+  geom_vline(xintercept = 0, lty='dashed', color='blue') +
+  geom_hline(yintercept = 0, lty='dashed', color='blue') +
+  geom_abline(slope = 1, intercept=0, lty='dashed') +
+  xlab('log2(fold-change) before') +
+  ylab('log2(fold-change) after')
+ggsave('lps-log2fc-before-after.pdf', height=3, width=5)
+```
+
+
+# GM12878 vs. K562
+
+```{r load-h3k27ac}
+myfiles <- list.files(pattern = 'h3k27ac_results_gamma0.5_chr.*rds')
+loops <- NULL
+before <- NULL
+after <- NULL
+diff_results <- NULL
+for (f in myfiles) {
+  d <- readRDS(f)
+  chrom <- unlist(strsplit(unlist(strsplit(f,'_'))[4],'\\.'))[1]
+  if (is.null(loops)) {
+    loops <- d@loops
+  } else {
+    loops <- rbind(loops, d@loops)
+  }
+  if (is.null(before)) {
+    before <- d@results$before
+  } else {
+    before <- rbind(before, d@results$before)
+  }
+  if (is.null(after)) {
+    after <- d@results$after
+  } else {
+    after <- rbind(after, d@results$after)
+  }
+  if (is.null(diff_results)) {
+    diff_results <- d@results$df %>% mutate(chrom=chrom)
+  } else {
+    diff_results <- rbind(diff_results, d@results$df %>% mutate(chrom=chrom))
+  }
+}
+loops$strength_before <- rowMeans(before)
+fails <- (before > 20) & (after < 5)
+fail_idx <- which(rowSums(fails)>0)
+loops <- loops[-fail_idx,]
+before <- before[-fail_idx,]
+after <- after[-fail_idx,]
+```
+
+
+```{r}
+plot(before[,1], after[,1])
+```
+
+
+
+
+## Run DESeq2 before and after
+
+
+```{r run-deseq2-before-after-lps}
+na_idx <- which(rowSums(is.na(before))>0 | rowSums(is.na(after))>0)
+# before
+cts_before <- before[-na_idx,]
+cts_after <- after[-na_idx,]
+loops_subset <- loops[-na_idx,]
+idx_filter_5 <- which(rowSums(cts_before)>=5 & rowSums(cts_after)>=5)
+cts_before <- cts_before[idx_filter_5,]
+cts_after <- cts_after[idx_filter_5,]
+loops_subset <- loops_subset[idx_filter_5,]
+loops_subset$id <- paste(loops_subset$label, loops_subset$chr1, loops_subset$idx, sep='-')
+rownames(cts_before) <- rownames(cts_after) <- loops_subset$id
+colnames(cts_before) <- c('gm12878_1','gm12878_2','k562_1','k562_2', 'k562_3')
+coldata <- data.frame(condition = c('gm12878','gm12878','k562','k562', 'k562'))
+rownames(coldata) <- colnames(cts_before)
+dds <- DESeqDataSetFromMatrix(countData = cts_before, colData = coldata, design = ~ condition)
+dds <- DESeq(dds)
+res_before <- results(dds)
+# after
+colnames(cts_after) <- c('gm12878_1','gm12878_2','k562_1','k562_2', 'k562_3')
+coldata <- data.frame(condition = c('gm12878','gm12878','k562','k562', 'k562'))
+rownames(coldata) <- colnames(cts_after)
+dds <- DESeqDataSetFromMatrix(countData = round(cts_after), colData = coldata, design = ~ condition)
+dds <- DESeq(dds)
+res_after <- results(dds)
+```
+
+## Plot log2fc before vs. after
+
+```{r}
+data.frame(log2fc_before = res_before$log2FoldChange, 
+           log2fc_after = res_after$log2FoldChange,
+           padj_before = res_before$padj,
+           padj_after = res_after$padj) %>%
+  mutate(label = case_when(
+    padj_before < 0.001 & padj_after < 0.001 ~ 'Stays significant',
+    padj_before < 0.001 & padj_after > 0.01 ~ 'No longer significant',
+    padj_before > 0.01 & padj_after < 0.001 ~ 'Newly significant',
+    TRUE ~ 'not significant'
+  )) %>%
+  mutate(label = factor(label, levels = c('not significant', 'Stays significant', 'Newly significant', 'No longer significant'))) %>%
+  mutate(alpha = ifelse(label == 'not significant', 0.01, 0.75)) %>%
+  mutate(color = case_when(
+    label == 'not significant' ~ 'grey',
+    label == 'Stays significant' ~ 'black', 
+    label == 'Newly significant' ~ 'red',
+    label == 'No longer significant' ~ 'blue'
+  )) %>%
+  filter(label != 'not significant') %>%
+  ggplot(aes(x = log2fc_before, y = log2fc_after)) +
+  geom_point(aes(color = color, alpha=alpha)) +
+  scale_color_identity(guide = 'legend',
+                       name = '',
+                       breaks = c('grey', 'black', 'red', 'blue'),
+                       labels = c('not significant', 'Stays significant', 'Newly significant', 'No longer significant')) +
+  scale_alpha_identity() +
+  theme_classic() +
+  geom_vline(xintercept = 0, lty='dashed', color='green') +
+  geom_hline(yintercept = 0, lty='dashed', color='green') +
+  geom_abline(slope = 1, intercept=0, lty='dashed', color = 'red') +
+  xlab('log2(fold-change) before') +
+  ylab('log2(fold-change) after')
+ggsave('gm12878-k562-log2fc-before-after.pdf', height=3, width=5)
+```
+
+
+## Get differentially expressed genes
+
+
+First import data from salmon output on kraken
+
+```{r run-deseq-genes-gm12878-k562}
+################# load in metadata and select the samples ####################
+
+metadata <- fread('/data/public_data/encode_RNASeq_human/new_data/meta/human_ENCODE_RNASEQ_metadata.tsv')
+metadata <- metadata %>%
+  filter(grepl('GM12878', `Biosample term name`) | grepl('K562', `Biosample term name`)) %>%
+  filter(Assay == 'RNA-seq', `Audit WARNING`=='', `Run type`=='paired-ended', `Library made from` == 'polyadenylated mRNA',
+         `Library depleted in` == 'rRNA')
+sampleNames <- fread('/data/public_data/encode_RNASeq_human/new_data/quants/paired_ended/sampleNames.tsv',header=F)
+geneNames <- fread('/data/public_data/encode_RNASeq_human/new_data/quants/paired_ended/gene_ids.tsv', header=F)
+files <- file.path('/data/public_data/encode_RNASeq_human/new_data/quants/paired_ended',  metadata$`Experiment accession`, paste0(metadata$`File accession`,'_', metadata$`Paired with`), 'quants/quant.sf')
+metadata <- metadata[file.exists(files),]
+files <- files[file.exists(files)]
+samples <- data.frame(cell_line = metadata[,`Biosample term name`])
+rownames(samples) <- paste0(metadata$`Biosample term name`, '_', metadata$`File accession`)
+################### import the transcript data ####################################
+names(files) <- paste0(metadata$`Biosample term name`, '_', metadata$`File accession`)
+dir <- system.file("extdata", package="tximportData")
+tx2gene <- read_csv(file.path(dir, "tx2gene.gencode.v27.csv"))
+txi <- tximport(files, type="salmon", tx2gene=tx2gene)
+ddsTxi <- DESeqDataSetFromTximport(txi, colData = samples, design = ~ cell_line)
+keep <- rowSums(counts(ddsTxi))>=10
+ddsTxi <- ddsTxi[keep,]
+dds <- DESeq(ddsTxi)
+res <- results(dds)
+```
+
+
+## Gene expr volcano
+
+```{r}
+data.frame(res) %>%
+  ggplot(aes(x = log2FoldChange, y = -log10(padj))) +
+  geom_point(alpha=0.15) +
+  geom_vline(xintercept=0, lty='dashed', color='grey')+
+  theme_classic() +
+  xlab('log2(FC) gene expr.') +
+  ylab('-log10(p adjusted)')
+ggsave('DE-genexpr-gm12878-k562-volcano-all-genes.pdf', height = 4, width = 4)
+```
+
+
+
+
+
+## Only take loops that are linked to genes
+
+AND annotate them with the log2fc and whether or not they are significantly
+differentially expressed between the two conditions.
+
+
+```{r gencode-ovl-loops-lps}
+
+# add in the loop log2fc and padj
+loops_subset$loop_log2fc_before <- res_before$log2FoldChange
+loops_subset$loop_log2fc_after <- res_after$log2FoldChange
+loops_subset$loop_se_before<- res_before$lfcSE
+loops_subset$loop_se_after <- res_after$lfcSE
+loops_subset$loop_padj_before <- res_before$padj
+loops_subset$loop_padj_after <- res_after$padj
+
+
+# get gene TSS
+gencode <- import('/rafalab/lzou/resources/gencode.v42.annotation.gtf.gz')
+gencode <- gencode[gencode$type=='gene',]
+gene_df <- data.frame(gene_name = gencode$gene_name, gene_id = gencode$gene_id, strand = strand(gencode),
+                      chrom = seqnames(gencode), start = start(gencode), end = end(gencode))
+gene_df <- gene_df %>%
+  mutate(TSS_start = ifelse(strand == '+', start, end),
+         TSS_end = ifelse(strand=='+', start+1, end-1))
+
+gene_df$gene_id <- gsub('_.*','',gene_df$gene_id)
+
+gene_df <- gene_df %>%
+  filter(gene_id %in% rownames(res))
+# overlap loop start/ends to get ones overlapping TSS
+# get all the gene TSS that touch that loop
+
+# first loop
+ovl <- findOverlaps(
+  loops_subset %>%
+    dplyr::select(chr1, s1, e1) %>% 
+    dplyr::rename(seqnames = chr1, start = s1, end = e1) %>% 
+    makeGRangesFromDataFrame(),
+  gene_df %>% 
+    dplyr::select(chrom, TSS_start, TSS_end) %>% 
+    dplyr::rename(seqnames = chrom, start = TSS_start, end = TSS_end) %>%
+    makeGRangesFromDataFrame()
+) %>% data.frame()
+ovl$log2fc <- res[gene_df$gene_id[ovl$subjectHits],'log2FoldChange']
+ovl$se <- res[gene_df$gene_id[ovl$subjectHits],'lfcSE']
+ovl$padj <- res[gene_df$gene_id[ovl$subjectHits],'padj']
+ovl$gene <- gene_df$gene_name[ovl$subjectHits]
+ovl$strength_before <- loops_subset$strength_before[ovl$queryHits]
+# second loop
+ovl2 <- findOverlaps(
+  loops_subset %>%
+    dplyr::select(chr2, s2, e2) %>% 
+    dplyr::rename(seqnames = chr2, start = s2, end = e2) %>% 
+    makeGRangesFromDataFrame(),
+  gene_df %>% 
+    dplyr::select(chrom, TSS_start, TSS_end) %>% 
+    dplyr::rename(seqnames = chrom, start = TSS_start, end = TSS_end) %>%
+    makeGRangesFromDataFrame()
+) %>% data.frame()
+ovl2$log2fc <- res[gene_df$gene_id[ovl2$subjectHits],'log2FoldChange']
+ovl2$se <- res[gene_df$gene_id[ovl2$subjectHits],'lfcSE']
+ovl2$padj <- res[gene_df$gene_id[ovl2$subjectHits],'padj']
+ovl2$gene <- gene_df$gene_name[ovl2$subjectHits]
+ovl2$strength_before <- loops_subset$strength_before[ovl2$queryHits]
+ovl <- bind_rows(ovl, ovl2)
+ovl$loop_log2fc_before <- loops_subset$loop_log2fc_before[ovl$queryHits]
+ovl$loop_log2fc_after <- loops_subset$loop_log2fc_after[ovl$queryHits]
+ovl$loop_se_before <- loops_subset$loop_se_before[ovl$queryHits]
+ovl$loop_se_after <- loops_subset$loop_se_after[ovl$queryHits]
+ovl$loop_padj_before <- loops_subset$loop_padj_before[ovl$queryHits]
+ovl$loop_padj_after <- loops_subset$loop_padj_after[ovl$queryHits]
+
+onetoone <- ovl %>%
+  group_by(queryHits) %>%
+  summarise(npos = sum(log2fc>0), nneg = sum(log2fc<0)) %>%
+  filter(npos==0 | nneg==0) %>%
+  pull(queryHits)
+
+
+ovl %>%
+  filter(queryHits %in% onetoone) %>%
+  group_by(queryHits) %>%
+  summarise(log2fc = mean(log2fc), loop_log2fc_before = loop_log2fc_before, loop_log2fc_after = loop_log2fc_after) %>%
+  ungroup() %>%
+  mutate(loop_log2fc_diff = loop_log2fc_after-loop_log2fc_before) %>%
+  mutate(loop_log2fc_diff_bin = cut(loop_log2fc_diff, 5)) %>%
+  ggplot(aes(x = loop_log2fc_before, y = loop_log2fc_after-loop_log2fc_before)) +
+  geom_point(aes(color = log2fc),alpha=0.25) +
+  geom_hline(yintercept=0, lty='dashed', color = 'grey') +
+  geom_vline(xintercept = 0, lty='dashed', color='grey') +
+  geom_abline(slope=1, intercept=0, lty='dashed') +
+  geom_smooth() +
+  scale_color_gradient2(name='log2(FC) gene expr.', low = 'blue', high = 'red', midpoint = 0, mid='grey88') +
+  theme_classic() +
+  xlab('log2(FC) loop strength, before') +
+  ylab('log2(FC) loop strength, after')
+ggsave('DE-h3k27ac-gm12878-k562-log2fc-before-after-with-gex-color-avg-all-genes.pdf', height = 4, width = 6)
+```
+
+
+```{r}
+ovl %>%
+  filter(queryHits %in% onetoone) %>%
+  group_by(queryHits) %>%
+  summarise(log2fc = mean(log2fc), loop_log2fc_before = loop_log2fc_before, loop_log2fc_after = loop_log2fc_after, loop_padj_after = loop_padj_after, strength_before = strength_before) %>%
+  ungroup() %>%
+  #mutate(strength_bin = cut(strength_before, breaks=c(1,3,5,10,50,5000), labels = c('1-3','3-5','5-10','10-50','50+'))) %>%
+  mutate(strength_bin = cut_number(strength_before, 5)) %>%
+  mutate(loop_log2fc_before_bin = cut_number(loop_log2fc_before,5)) %>%
+  group_by(strength_bin, loop_log2fc_before_bin) %>%
+  summarise(cor_before = cor(log2fc, loop_log2fc_before), cor_after = cor(log2fc, loop_log2fc_after), count=n(), n_sig_before = sum((log2fc>2 & loop_log2fc_before>2)|(log2fc< -2 & loop_log2fc_before < -2)), n_sig_after = sum((log2fc>2 & loop_log2fc_after>2)|(log2fc < -2 & loop_log2fc_after < -2))) 
+```
+
+
+
+```{r}
+dd <- ovl %>%
+  filter(queryHits %in% onetoone) %>%
+  group_by(queryHits) %>%
+  summarise(log2fc = mean(log2fc), loop_log2fc_before = loop_log2fc_before, loop_log2fc_after = loop_log2fc_after, loop_padj_after = loop_padj_after, strength_before = strength_before) %>%
+  ungroup() %>%
+  mutate(strength_bin = cut(strength_before, breaks=c(1,3,5,10,5000), labels = c('1-3','3-5','5-10','10+'))) %>%
+  mutate(loop_log2fc_before_bin = cut(loop_log2fc_before, breaks=c(-13,-4,-1,1,4,12))) 
+
+mylabs <- dd %>%
+  group_by(loop_log2fc_before_bin) %>%
+  summarise(count=n())
+mylabs <- paste0(mylabs$loop_log2fc_before_bin, '\nn=', prettyNum(mylabs$count, big.mark=','))
+
+dd %>%
+  ggplot(aes(x = loop_log2fc_before_bin, y = (loop_log2fc_after-loop_log2fc_before))) +
+  geom_violin(aes(fill = strength_bin), draw_quantiles = 0.5, scale='width') +
+  geom_hline(yintercept=0, lty='dashed', color='red')+
+  scale_fill_tableau(name='Avg. loop strength\nbefore') +
+  scale_x_discrete(labels = mylabs) +
+  theme_classic() +
+  xlab('log2(FC) loop strength, before') +
+  ylab('log2(FC) loop strength, after-before')
+ggsave('DE-gm12878-k562-violins-v2.pdf', height=3, width=6)
+```
+
+
+
+
+
+
+```{r}
+ovl %>%
+  filter(queryHits %in% onetoone) %>%
+  group_by(queryHits) %>%
+  summarise(log2fc = mean(log2fc), loop_log2fc_before = loop_log2fc_before, loop_log2fc_after = loop_log2fc_after, loop_padj_after = loop_padj_after) %>%
+  ggplot(aes(x = loop_log2fc_after, y = -log10(loop_padj_after))) +
+  geom_point(aes(color = log2fc)) +
+  geom_vline(xintercept = 0, lty='dashed', color='grey') +
+  scale_color_gradient2(name='log2(FC) gene expr.', low = 'blue', high = 'red', midpoint = 0, mid='grey88') +
+  theme_classic() +
+  xlab('log2(FC) loop strength, after') +
+  ylab('-log10(p adjusted)')
+ggsave('DE-h3k27ac-gm12878-k562-volcano-all-genes.pdf', height = 4, width = 6)
+```
+
+
+```{r}
+dd <- ovl %>%
+  filter(queryHits %in% onetoone) %>%
+  group_by(queryHits) %>%
+  summarise(log2fc = mean(log2fc), loop_log2fc_before = loop_log2fc_before, loop_log2fc_after = loop_log2fc_after) %>%
+  ungroup() %>%
+  mutate(loop_log2fc_diff = loop_log2fc_after-loop_log2fc_before) %>%
+  mutate(loop_log2fc_before_bin = cut(loop_log2fc_before, breaks=c(-13, -8, -5, -3, -1.5, 1.5, 3, 5, 8,12))) 
+
+dd_colors <- dd %>%
+  group_by(loop_log2fc_before_bin) %>%
+  summarise(color = mean(log2fc))
+
+dd_label <- dd %>%
+  group_by(loop_log2fc_before_bin) %>%
+  summarise(count = n()) %>%
+  mutate(label = paste0(loop_log2fc_before_bin, '\nn=',prettyNum(count,big.mark=','))) %>%
+  pull(label)
+
+dd %>%
+  left_join(dd_colors) %>%
+  ggplot(aes(x = loop_log2fc_before_bin, y = loop_log2fc_diff)) +
+  geom_violin(aes(fill=color),draw_quantiles = 0.5) +
+  geom_hline(yintercept=0, lty='dashed', color = 'red') +
+  scale_fill_gradient2(name='Mean log2(FC)\ngene expr.', low = 'blue', high = 'red', midpoint = 0, mid='grey88') +
+  scale_x_discrete(breaks = levels(dd_colors$loop_log2fc_before_bin), labels = dd_label) +
+  theme_classic() +
+  theme(
+    legend.position = 'right')+ 
+  coord_cartesian(ylim=c(-4,4)) +
+  xlab('log2(FC) loop strength, before') +
+  ylab('log2(FC) loop strength, after-before')
+ggsave('DE-violin-gm12878-k562.pdf', height=4, width=7.5)
+```
+
+
+```{r}
+dd <- ovl %>%
+  filter(queryHits %in% onetoone) %>%
+  group_by(queryHits) %>%
+  summarise(log2fc = mean(log2fc), loop_log2fc_before = loop_log2fc_before, loop_log2fc_after = loop_log2fc_after, strength_before=strength_before) %>%
+  ungroup() %>%
+  mutate(loop_log2fc_diff = loop_log2fc_after-loop_log2fc_before) %>%
+  mutate(loop_log2fc_before_bin = cut_number(loop_log2fc_after, 5)) %>%
+  mutate(loop_log2fc_diff_bin = cut_number(loop_log2fc_diff, 3))
+
+dd %>%
+  group_by(loop_log2fc_before_bin) %>%
+  summarise(cor_before = cor(loop_log2fc_before, log2fc, method='spearman'), cor_after = cor(loop_log2fc_after, log2fc,method='spearman')) %>%
+  pivot_longer(cols = c(cor_before, cor_after), names_to = 'type', values_to='cor') %>%
+  ggplot(aes(x = loop_log2fc_before_bin, y = 1)) +
+  geom_tile(aes(fill = cor)) +
+  theme_minimal() +
+  facet_wrap(type ~ .) +
+  scale_fill_viridis()
+
+
+dd %>%
+  group_by(loop_log2fc_diff_bin, loop_log2fc_before_bin) %>%
+  summarise(cor_before = cor(loop_log2fc_before, log2fc), cor_after = cor(loop_log2fc_after, log2fc)) %>%
+  ggplot(aes(x = loop_log2fc_before_bin, y = loop_log2fc_diff_bin)) +
+  geom_tile(aes(fill = cor_after-cor_before)) +
+  theme_minimal() +
+  scale_fill_gradient2(low='blue',high='red',midpoint=0,mid='grey')
+```
+
+
+
+```{r}
+# get genes associated with newly significant loops
+dd <- ovl %>%
+  filter(queryHits %in% onetoone) %>%
+  group_by(queryHits) %>%
+  summarise(log2fc = mean(log2fc), loop_padj_before = loop_padj_before, loop_padj_after = loop_padj_after) %>%
+  ungroup() %>%
+  mutate(loop_sig = case_when(
+    loop_padj_before <= 0.001 & loop_padj_after <= 0.001 ~ 'Stays\nsignificant',
+    loop_padj_before > 0.001 & loop_padj_after <= 0.001 ~ 'Newly\nsignificant',
+    loop_padj_before <= 0.001 & loop_padj_after > 0.001 ~ 'No longer\nsignificant',
+    TRUE ~ 'Not\nsignificant'
+  )) %>%
+  mutate(loop_sig = factor(loop_sig, levels =  c('Not\nsignificant', 'No longer\nsignificant', 'Newly\nsignificant', 'Stays\nsignificant')))
+
+dd_label <- dd %>%
+  group_by(loop_sig) %>%
+  summarise(count = n()) %>%
+  mutate(label = paste0(loop_sig, '\nn=',prettyNum(count,big.mark=','))) %>%
+  pull(label)
+
+dd %>%
+  ggplot(aes(x = loop_sig, y = abs(log2fc))) +
+  geom_boxplot() +
+  scale_x_discrete(breaks = c('Not\nsignificant', 'No longer\nsignificant', 'Newly\nsignificant', 'Stays\nsignificant'),
+                   labels = dd_label) +
+  theme_classic() +
+  xlab('Loop significance after') +
+  ylab('Absolute log2(FC) gene expr.')
+ggsave('gm12878-k562-abs-log2fc-boxplots.pdf', height=4, width=4)
+```
+
+
+## Bar charts of significance
+
+```{r}
+dd %>%
+  mutate(padj_before = case_when(
+    loop_padj_before <= 1e-5 ~ '<=1e-5',
+    loop_padj_before > 1e-5 & loop_padj_before <= 1e-3 ~ '(1e-5,1e-3]',
+    loop_padj_before > 1e-3 & loop_padj_before <= 1e-1 ~ '(1e-3,1e-1]',
+    TRUE ~ '>1e-1'
+  )) %>%
+  mutate(padj_after = case_when(
+    loop_padj_after <= 1e-5 ~ '<=1e-5',
+    loop_padj_after > 1e-5 & loop_padj_after <= 1e-3 ~ '(1e-5,1e-3]',
+    loop_padj_after > 1e-3 & loop_padj_after <= 1e-1 ~ '(1e-3,1e-1]',
+    TRUE ~ '>1e-1'
+  )) %>%
+  mutate(padj_before = factor(padj_before, levels = c('<=1e-5','(1e-5,1e-3]','(1e-3,1e-1]','>1e-1')),
+         padj_after = factor(padj_after, c('<=1e-5','(1e-5,1e-3]','(1e-3,1e-1]','>1e-1'))) %>%
+  group_by(padj_before, padj_after) %>%
+  summarise(count=n()) %>%
+  ggplot(aes(x = padj_before, y = count)) +
+  geom_bar(aes(fill=padj_after),stat='identity',color='black') +
+  scale_fill_viridis(name='p adjusted, after',discrete=T, direction=-1) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle=45, hjust=1))+
+  xlab('p adjusted, before') +
+  ylab('Number of loops')
+ggsave('DE-bar-gm12878-k562.pdf', height=4, width=4)
+```
+
+
+
+
+
+## Isolate by gene
+
+```{r}
+# get the genes associated with newly significant and stays significant loops
+# for GM12878 and K562 separately
+
+no_longer_sig <- dd %>%
+  filter(loop_sig == 'No longer\nsignificant') %>%
+  pull(queryHits)
+
+newly_sig <- dd %>%
+  filter(loop_sig == 'Newly\nsignificant') %>%
+  pull(queryHits)
+
+stay_sig <- dd %>%
+  filter(loop_sig == 'Stays\nsignificant') %>%
+  pull(queryHits)
+
+not_sig <- dd %>%
+  filter(loop_sig == 'Not\nsignificant') %>%
+  pull(queryHits)
+
+genes_k562_not <- ovl %>%
+  filter(queryHits %in% not_sig) %>%
+  filter(log2fc > 0) 
+
+genes_k562_no_longer <- ovl %>%
+  filter(queryHits %in% no_longer_sig) %>%
+  filter(log2fc > 0) 
+
+genes_k562_new <- ovl %>%
+  filter(queryHits %in% newly_sig) %>%
+  filter(log2fc > 0) 
+
+genes_k562_stay <- ovl %>%
+  filter(queryHits %in% stay_sig) %>%
+  filter(log2fc > 0) 
+
+genes_gm12878_no_longer <- ovl %>%
+  filter(queryHits %in% no_longer_sig) %>%
+  filter(log2fc < 0) 
+
+genes_gm12878_not <- ovl %>%
+  filter(queryHits %in% not_sig) %>%
+  filter(log2fc < 0) 
+
+genes_gm12878_new <- ovl %>%
+  filter(queryHits %in% newly_sig) %>%
+  filter(log2fc < 0)
+
+genes_gm12878_stay <- ovl %>%
+  filter(queryHits %in% stay_sig) %>%
+  filter(log2fc < 0) 
+
+# get distinct genes in stay first
+genes_gm12878_stay <- genes_gm12878_stay %>%
+  select(gene, log2fc) %>%
+  distinct() %>%
+  mutate(sample = 'GM12878', label = 'Stays\nsignificant')
+genes_k562_stay <- genes_k562_stay %>%
+  select(gene, log2fc) %>%
+  distinct() %>%
+  mutate(sample = 'K562', label = 'Stays\nsignificant')
+
+# filter new to ones not already in stay
+genes_gm12878_new <- genes_gm12878_new %>%
+  select(gene, log2fc) %>%
+  distinct() %>%
+  filter(!(gene %in% genes_gm12878_stay$gene)) %>%
+  mutate(sample = 'GM12878', label = 'Newly\nsignificant')
+genes_k562_new <- genes_k562_new %>%
+  select(gene, log2fc) %>%
+  distinct() %>%
+  filter(!(gene %in% genes_k562_stay$gene)) %>%
+  mutate(sample = 'K562', label = 'Newly\nsignificant')
+
+# filter no longer to ones not already in new or stay
+genes_gm12878_no_longer <- genes_gm12878_no_longer %>%
+  select(gene, log2fc) %>%
+  distinct() %>%
+  filter(!(gene %in% c(genes_gm12878_stay$gene,genes_gm12878_new$gene))) %>%
+  mutate(sample = 'GM12878', label = 'No longer\nsignificant')
+genes_k562_no_longer <- genes_k562_no_longer %>%
+  select(gene, log2fc) %>%
+  distinct() %>%
+  filter(!(gene %in% c(genes_k562_stay$gene,genes_k562_new$gene))) %>%
+  mutate(sample = 'K562', label = 'No longer\nsignificant')
+
+# filter not to ones not already in new or stay
+genes_gm12878_not <- genes_gm12878_not %>%
+  select(gene, log2fc) %>%
+  distinct() %>%
+  filter(!(gene %in% c(genes_gm12878_stay$gene,genes_gm12878_new$gene))) %>%
+  mutate(sample = 'GM12878', label = 'Not\nsignificant')
+genes_k562_not <- genes_k562_not %>%
+  select(gene, log2fc) %>%
+  distinct() %>%
+  filter(!(gene %in% c(genes_k562_stay$gene,genes_k562_new$gene))) %>%
+  mutate(sample = 'K562', label = 'Not\nsignificant')
+
+
+rbind(genes_gm12878_stay, genes_gm12878_no_longer, genes_gm12878_new, genes_gm12878_not,
+      genes_k562_stay, genes_k562_no_longer, genes_k562_new, genes_k562_not) %>%
+  ggplot(aes(x = sample, y = abs(log2fc))) +
+  geom_boxplot(aes(fill=label)) +
+  scale_fill_tableau()
+```
+
+
+

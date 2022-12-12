@@ -44,7 +44,7 @@ hic <- readMM(paste0('/rafalab/lzou/hichip_mnase/K562_HiC_',current_chrom,'_2500
 coords <- coords[seqnames(coords)==current_chrom,]
 ```
 
-```{r}
+```{r, eval=F}
 set.seed(1337)
 myDcon <- Dcon(mat = list(k562_rep1 = k562_rep1, k562_rep2 = k562_rep2),
                coords = coords,

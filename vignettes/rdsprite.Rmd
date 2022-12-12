@@ -15,17 +15,40 @@ library(dcon)
 ```{r}
 windows <- fread('/rafalab/lzou/rdsprite/dna_matrix/mm10.100kb.windows', header=F, col.names=c('chrom','start','end'))
 windows$idx <- seq(1,nrow(windows))
-l1 <- readMM('/rafalab/lzou/rdsprite/dna_matrix/L1,LINE_DNA_matrix_100000_clusters_2-100.mtx')
-b1 <- readMM('/rafalab/lzou/rdsprite/dna_matrix/Alu,SINE_DNA_matrix_100000_clusters_2-100.mtx')
-total <- readMM('/rafalab/lzou/rdsprite/dna_matrix/total_DNA_matrix_100000_clusters_2-100.mtx')
+l1 <- readMM('/rafalab/lzou/rdsprite/dna_matrix/L1,LINE|LINE,L1_DNA_matrix_count_RNA_100000_clusters_2-100.mtx')
+l1md <- readMM('/rafalab/lzou/rdsprite/dna_matrix/L1Md_DNA_matrix_count_RNA_100000_clusters_2-100.mtx')
+b1 <- readMM('/rafalab/lzou/rdsprite/dna_matrix/Alu,SINE|SINE,Alu_DNA_matrix_count_RNA_100000_clusters_2-100.mtx')
+total <- readMM('/rafalab/lzou/rdsprite/dna_matrix/All_DNA_matrix_count_RNA_100000_clusters_2-100.mtx')
+total_DNA <- readMM('/rafalab/lzou/rdsprite/total_DD_DNA_matrix_100000_clusters_2-100.mtx')
 compartments <- fread('/rafalab/lzou/rdsprite/mm10_mESC_bonev2017_tableS2.csv')
 ```
 
 ```{r}
 l1_chr18 <- l1[windows$idx[windows$chrom=='chr18'],windows$idx[windows$chrom=='chr18']]
+l1md_chr18 <- l1md[windows$idx[windows$chrom=='chr18'],windows$idx[windows$chrom=='chr18']]
 b1_chr18 <- b1[windows$idx[windows$chrom=='chr18'],windows$idx[windows$chrom=='chr18']]
 total_chr18 <- total[windows$idx[windows$chrom=='chr18'],windows$idx[windows$chrom=='chr18']]
+total_DNA_chr18 <- as(total_DNA[windows$idx[windows$chrom=='chr18'],windows$idx[windows$chrom=='chr18']], 'dgCMatrix')
+
+# get a basic observed/expected for chr18
+dd <- summary(total_DNA_chr18) %>%
+  mutate(dist = j-i)
+
+expec <- dd %>%
+  group_by(dist) %>%
+  summarise(expected = mean(x))
+
+dd <- dd %>%
+  left_join(expec, by = 'dist') %>%
+  mutate(OE = x/expected)
+
+OE_mat <- sparseMatrix(i=dd$i, j= dd$j, x = dd$OE, dims=c(908,908))
+
+save(l1_chr18, l1md_chr18, b1_chr18, total_chr18, total_DNA_chr18, OE_mat, file = '/rafalab/lzou/dcon/hiplastic/shiny_data_v2.RData')
 ```
+
+
+
 
 
 # Visualizing total DNA-DNA contact matrix for DNA contacting RNA

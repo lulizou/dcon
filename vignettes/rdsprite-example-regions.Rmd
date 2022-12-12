@@ -1,0 +1,991 @@
+---
+output: html_document
+---
+
+```{r load-libraries-and-data}
+library(dplyr)
+library(ggplot2)
+library(reshape2)
+library(tidyr)
+library(data.table)
+library(Matrix)
+library(RColorBrewer)
+library(dcon)
+library(rtracklayer)
+library(viridis)
+library(irlba)
+```
+
+
+# Functions
+
+```{r}
+plot_mat <- function(mat, idx = NULL, main = '', max = NULL, genes = NULL, 
+                     genes2 = NULL, xlimits = NULL,
+                     text = T, bedtrack = NULL, track1 = NULL, track2 = NULL,
+                     fill = 'red') {
+  m <- mat
+  if (is.null(max)) {
+    max <- max(mat)
+  }
+  rownames(m) <- windows$start[idx]/1e6
+  colnames(m) <- windows$start[idx]/1e6
+  p <- m %>%
+    as.matrix() %>%
+    reshape2::melt() %>%
+    mutate(value = ifelse(value > max, max, value)) %>%
+    ggplot(aes(x = Var2, y = Var1)) +
+    geom_raster(aes(fill = value)) +
+    theme_classic() +
+    scale_y_reverse() +
+    scale_fill_gradient(low='white',high=fill) +
+    ggtitle(main) +
+    xlab('') +
+    ylab('')
+  if (!is.null(genes)) {
+    addon <- 1e5/1e6
+    nudge <- addon/6
+    myy <- max(windows$start[idx]/1e6) + addon
+    p <- p +
+      geom_segment(data = genes, aes(x = start, xend = end, y = myy, yend=myy), 
+                   size=2, color='blue', position=position_jitter(height=addon-0.05, seed=1))
+    
+    if (text) {
+      p <- p + geom_text(data = genes, aes(x = (start+end)/2, y = myy+nudge, label = gene), 
+                         position=position_jitter(height=addon-0.05, seed=1), size=3, color='black')
+    }
+  }
+  if (!is.null(genes2)) {
+    addon <- 1e5/1e6
+    nudge <- addon/6
+    myy <- max(windows$start[idx]/1e6) + 2*addon
+    p <- p +
+      geom_curve(data = genes2, aes(x = start, xend = end, y = myy, yend=myy), 
+                   size=2, color='purple', position=position_jitter(height=addon-0.05, seed=1))
+    
+    if (text) {
+      p <- p + geom_text(data = genes2, aes(x = (start+end)/2, y = myy+nudge, label = gene), 
+                         position=position_jitter(height=addon-0.05, seed=1), size=3, color='black')
+    }
+  }
+  if (!is.null(bedtrack)) {
+    addon <- 1e5/1e6/4
+    myy2 <- min(windows$start[idx]/1e6) - addon
+    p <- p +
+      geom_segment(data = bedtrack, aes(x = start, xend = end, y = myy2, yend=myy2, color = score),
+                   size=2) +
+      geom_segment(data = bedtrack, aes(x = myy2, xend = myy2, y = start, yend=end, color = score),
+                   size=2) +
+      scale_color_viridis()
+  }
+  if (!is.null(track1)) {
+    p <- p + geom_point(data = track1, aes(x = start, y = -score+144.1), size=0.5)
+  }
+  if (!is.null(track2)) {
+    p <- p + geom_point(data = track2, aes(x = start, y = -score+144.2), size=0.5)
+  }
+  if (!is.null(xlimits)) {
+    p <- p + xlim(xlimits)
+  }
+  print(p)
+}
+
+get_genes <- function(idx) {
+  mygr <- makeGRangesFromDataFrame(
+    data.frame(chrom = windows$chrom[idx],
+               start = windows$start[idx],
+               end = windows$end[idx])
+  )
+  ovl <- findOverlaps(mygr, gencode)
+  genc <- gencode[unique(subjectHits(ovl)),]
+  genc <- genc[genc$type%in%c('gene')]
+  data.frame(
+    chrom = seqnames(genc),
+    start = start(ranges(genc)),
+    end = end(ranges(genc)),
+    type = genc$type,
+    gene = genc$gene_name
+  )
+}
+
+get_rmsk <- function(idx) {
+  mygr <- makeGRangesFromDataFrame(
+    data.frame(chrom = windows$chrom[idx],
+               start = windows$start[idx],
+               end = windows$end[idx])
+  )
+  ovl <- findOverlaps(mygr, rmsk)
+  genc <- rmsk[unique(subjectHits(ovl)),]
+  data.frame(
+    chrom = seqnames(genc),
+    start = start(ranges(genc)),
+    end = end(ranges(genc)),
+    class = genc$repClass,
+    gene = genc$repName
+  )
+}
+```
+
+
+```{r}
+windows <- fread('/rafalab/lzou/rdsprite/dna_matrix/mm10.10kb.windows', header=F, col.names=c('chrom','start','end'))
+windows$idx <- seq(1,nrow(windows))
+total_DNA <- readMM('/rafalab/lzou/rdsprite/total_DD_DNA_matrix_10000_clusters_2-100.mtx')
+total_DNA <- total_DNA + t(total_DNA) - Diagonal(x=diag(total_DNA))
+offset <- fread('/rafalab/lzou/rdsprite/count_windows/total_RNA_count_windows_10000_clusters_2-100.csv')
+gencode <- import('/rafalab/lzou/resources/gencode.vM10.annotation.gff3.gz')
+rmsk <- fread('/rafalab/lzou/resources/mm10.rmsk')
+colnames(rmsk)[1:3] <- c('chrom','start','end')
+rmsk <- makeGRangesFromDataFrame(rmsk, keep.extra.columns = T)
+```
+
+# Get A/B compartments of chr19
+
+```{r}
+total_DNA_100kb <- readMM('/rafalab/lzou/rdsprite/total_DD_DNA_matrix_100000_clusters_2-100.mtx')
+total_DNA_100kb <- total_DNA_100kb + t(total_DNA_100kb) - Diagonal(x=diag(total_DNA_100kb))
+windows <- fread('/rafalab/lzou/rdsprite/dna_matrix/mm10.100kb.windows', header=F, col.names=c('chrom','start','end'))
+windows$idx <- seq(1,nrow(windows))
+idx <- windows$idx[which(windows$chrom=='chr19')]
+total_DNA_100kb <- total_DNA_100kb[idx,idx]
+```
+
+
+# Fn1
+
+```{r}
+fn1 <- readMM('/rafalab/lzou/rdsprite/dna_matrix/Fn1_DNA_matrix_count_RNA_10000_clusters_2-100.mtx')
+fn1 <- fn1 + t(fn1) - Diagonal(x=diag(fn1))
+```
+
+```{r}
+idx <- windows$idx[which(windows$chrom=='chr1' & windows$start >= 71.4e6 & windows$end <= 72e6)]
+tot <- total_DNA[idx,idx]
+g <- get_genes(idx)
+g$start <- g$start/1e6
+g$end <- g$end/1e6
+g <- g %>% filter(gene!='Abca12')
+```
+
+## RD contacts
+
+```{r}
+plot_mat(fn1[idx,idx], idx, main = 'fn1', genes = g, text=T)
+ggsave('rdsprite-fn1-before.pdf', height=4, width=4)
+```
+
+## DD contacts
+
+```{r}
+plot_mat(tot, idx, main = 'Fn1 region DNA-DNA contacts', max=100, genes = g)
+ggsave('rdsprite-fn1-DD.pdf', height=4, width=4)
+```
+
+## Normalized DD contacts
+
+```{r}
+norm_tot <- dcon:::normalize_hic(tot, gamma=1, threshold = 100)
+plot_mat(norm_tot, idx, main = 'Fn1 region DNA-DNA contacts, normalized', genes = g)
+```
+
+## Deconvolved 1D no offset
+
+```{r}
+mat <- fn1[idx,idx]
+y1 <- rowSums(mat)
+fit1 <- dcon:::fit_decon(y1, norm_tot, df = 20)
+data.frame(obs = y1, fit = exp(fit1$est), pos = (windows[idx,] %>% pull(start))/1e6) %>%
+  pivot_longer(cols = c(obs, fit), names_to = 'type', values_to = 'value') %>%
+  ggplot(aes(x = pos, y = value)) +
+  geom_hline(yintercept=0) +
+  geom_point(aes(color = type)) +
+  geom_line(aes(color = type)) +
+  scale_color_tableau() +
+  geom_segment(data = g, aes(x = start, xend = end, y = -250, yend=-250), size=2, color='blue', position=position_jitter(height=150, seed=1)) +
+  geom_text(data = g, aes(x = (start+end)/2, y = -300, label = gene), position=position_jitter(height=150, seed=1), size=3) +
+  theme_classic()
+```
+
+## Deconvolved 2D no offset
+
+```{r}
+res <- exp(matrix(data = rep(fit1$est, length(y1)), nrow=length(y1), ncol=length(y1)) + 
+             t(matrix(data = rep(fit1$est, length(y1)), nrow = length(y1), ncol = length(y1))))
+plot_mat(res, idx, genes = g)
+ggsave('rdsprite-fn1-after.pdf', height=4, width=4)
+```
+
+# Kcnq1ot1
+
+```{r}
+kcnq1ot1 <- readMM('/rafalab/lzou/rdsprite/dna_matrix/Kcnq1ot1_DNA_matrix_count_RNA_10000_clusters_2-100.mtx')
+kcnq1ot1 <- kcnq1ot1 + t(kcnq1ot1) - Diagonal(x=diag(kcnq1ot1))
+```
+
+Kcnq1 locus is between 143-144mb on chromosome 7 of mm10
+
+Can zoom out a bit to look at 140-146mb
+
+
+```{r}
+#idx <- windows$idx[which(windows$chrom=='chr7' & windows$start >= 142.95e6 & windows$end <= 143.75e6)]
+idx <- windows$idx[which(windows$chrom=='chr7' & windows$start >= 138e6 & windows$end <= 146e6)]
+tot <- total_DNA[idx,idx]
+g <- get_genes(idx)
+g$start <- g$start/1e6
+g$end <- g$end/1e6
+g <- g %>% filter(grepl('Kcn|Cd|Slc|Tssc|Phl|Ascl|Tspan|Nap|Cars|Osbpl',gene))
+```
+
+## RD contacts
+
+```{r}
+plot_mat(kcnq1ot1[idx,idx], idx, main = 'Kcnq1ot1', genes = g, text=T)
+ggsave('rdsprite-kcnq1ot1-before.pdf', height=4, width=4)
+```
+
+## DD contacts
+
+```{r}
+plot_mat(tot, idx, main = 'Kcnq1ot1 region DNA-DNA contacts', max=100, genes = g)
+ggsave('rdsprite-kcnq1ot1-DD.pdf', height=4, width=4)
+```
+
+## Normalized DD contacts
+
+
+```{r}
+norm_tot <- dcon:::normalize_hic(tot, gamma=1, threshold = 50)
+plot_mat(norm_tot, idx, main = 'Kcnq1ot1 region DNA-DNA contacts, normalized', genes = g)
+```
+
+## Deconvolved 1D no offset
+
+```{r}
+mat <- kcnq1ot1[idx,idx]
+y1 <- rowSums(mat)
+fit1 <- dcon:::fit_decon(y1, norm_tot, df = 50)
+data.frame(obs = y1, fit = exp(fit1$est), pos = (windows[idx,] %>% pull(start))/1e6) %>%
+  pivot_longer(cols = c(obs, fit), names_to = 'type', values_to = 'value') %>%
+  ggplot(aes(x = pos, y = value)) +
+  geom_hline(yintercept=0) +
+  geom_point(aes(color = type)) +
+  geom_line(aes(color = type)) +
+  scale_color_tableau() +
+  geom_segment(data = g, aes(x = start, xend = end, y = -250, yend=-250), size=2, color='blue', position=position_jitter(height=150, seed=1)) +
+  geom_text(data = g, aes(x = (start+end)/2, y = -300, label = gene), position=position_jitter(height=150, seed=1), size=3) +
+  geom_point(data = h3k9me3, aes(x = start, y = score*1000-550), size=0.5) +
+  geom_point(data = h3k27me3, aes(x = start, y = score*1000-700), size=0.5) +
+  theme_classic()
+```
+
+## save to look at in IGV
+
+```{r}
+data.frame(
+  chrom = 'chr7',
+  start = (windows[idx,] %>% pull(start)),
+  end = (windows[idx,] %>% pull(end)),
+  value = y1
+) %>%
+  write.table(file = 'kcnq1ot1_raw_138-146.bedgraph', quote = F, sep = '\t', row.names = F, col.names=F)
+data.frame(
+  chrom = 'chr7',
+  start = (windows[idx,] %>% pull(start)),
+  end = (windows[idx,] %>% pull(end)),
+  value = exp(fit1$est)
+) %>%
+  write.table(file = 'kcnq1ot1_fit_138-146-df50-gamma1.bedgraph', quote = F, sep = '\t', row.names = F, col.names=F)
+```
+
+
+
+
+## Import H3K9me3
+
+```{r}
+h3k9me3 <- import('/rafalab/lzou/chip/ES-E14-H3K9me3-ENCFF293DGT-mm10.bigWig')
+h3k9me3 <- h3k9me3[seqnames(h3k9me3)=='chr7' & start(ranges(h3k9me3)) >= 142.95e6 & end(ranges(h3k9me3)) <= 143.75e6]
+h3k9me3 <- data.frame(h3k9me3)
+h3k9me3$start <- h3k9me3$start/1e6
+h3k9me3$end <- h3k9me3$end/1e6
+h3k9me3$score <- h3k9me3$score/max(h3k9me3$score)/10
+h3k9me3 %>%
+  ggplot(aes(x = start, y= score)) +
+  geom_point() +
+  theme_classic()
+```
+
+
+## Import H3K27me3
+
+```{r}
+h3k27me3 <- import('/rafalab/lzou/chip/ES-Bruce4-H3K27me3-ENCFF160FEV-mm10.bigWig')
+h3k27me3 <- h3k27me3[seqnames(h3k27me3)=='chr7' & start(ranges(h3k27me3)) >= 142.95e6 & end(ranges(h3k27me3)) <= 143.75e6]
+h3k27me3 <- data.frame(h3k27me3)
+h3k27me3$start <- h3k27me3$start/1e6
+h3k27me3$end <- h3k27me3$end/1e6
+h3k27me3$score <- h3k27me3$score/max(h3k27me3$score)/10
+h3k27me3 %>%
+  ggplot(aes(x = start, y= score)) +
+  geom_point() +
+  theme_classic()
+```
+
+## Deconvolved 2D no offset
+
+```{r}
+res <- exp(matrix(data = rep(fit1$est, length(y1)), nrow=length(y1), ncol=length(y1)) + 
+             t(matrix(data = rep(fit1$est, length(y1)), nrow = length(y1), ncol = length(y1))))
+plot_mat(res, idx, genes = g)
+ggsave('rdsprite-kcnq1ot1-after.pdf', height=4, width=4)
+```
+
+
+```{r}
+g_all <- get_genes(idx)
+g_all$start <- g_all$start/1e6
+g_all$end <- g_all$end/1e6
+plot_mat(res, idx, genes = g_all)
+```
+
+
+
+## Deconvolved 1D with offset
+
+```{r}
+off <- offset$count[idx]
+off[off==0] <- 1
+fit2 <- dcon:::fit_decon(y1, norm_tot, df = 20, offset = off)
+data.frame(obs = y1/600, fit = exp(fit2$est), pos = (windows[idx,] %>% pull(start))/1e6) %>%
+  pivot_longer(cols = c(obs, fit), names_to = 'type', values_to = 'value') %>%
+  ggplot(aes(x = pos, y = value)) +
+  geom_hline(yintercept=0) +
+  geom_point(aes(color = type)) +
+  geom_line(aes(color = type)) +
+  scale_color_tableau() +
+  geom_segment(data = g, aes(x = start, xend = end, y = -0.5, yend=-0.5), size=2, color='blue', position=position_jitter(height=0.5, seed=1)) +
+  geom_text(data = g, aes(x = (start+end)/2, y = -.55, label = gene), position=position_jitter(height=0.5, seed=1), size=3) +
+  theme_classic() +
+  xlab('position (mb)')
+```
+
+
+
+## Deconvolved 2D with offset
+
+```{r}
+res <- exp(matrix(data = rep(fit2$est, length(y1)), nrow=length(y1), ncol=length(y1)) + 
+             t(matrix(data = rep(fit2$est, length(y1)), nrow = length(y1), ncol = length(y1))))
+# NA out the low coverage
+# low_cov <- which(off < 200)
+# res[low_cov,] <- NA
+# res[,low_cov] <- NA
+plot_mat(res, idx, genes = g, max=1000)
+ggsave('rdsprite-kcnq1ot1-after-offset.pdf', height=4, width=4)
+```
+
+
+
+```{r}
+res <- exp(matrix(data = rep(fit2$est, length(y1)), nrow=length(y1), ncol=length(y1)) + 
+             t(matrix(data = rep(fit2$est, length(y1)), nrow = length(y1), ncol = length(y1))))
+plot_mat(res, idx, genes = g_all)
+```
+
+
+
+
+
+
+# Malat1
+
+```{r}
+malat1 <- readMM('/rafalab/lzou/rdsprite/dna_matrix/Malat1_DNA_matrix_count_RNA_10000_clusters_2-100.mtx')
+malat1 <- malat1 + t(malat1) - Diagonal(x=diag(malat1))
+```
+
+```{r}
+idx <- windows$idx[which(windows$chrom=='chr19' & windows$start >= 5.6e6 & windows$end <= 6e6)]
+tot <- total_DNA[idx,idx]
+g <- get_genes(idx)
+g$start <- g$start/1e6
+g$end <- g$end/1e6
+g <- g %>% filter(grepl('Map|Pcn|Rela|Sipa|Ehbp|Ltbp|Scyl|Malat|Neat|Slc|Tig', gene))
+```
+
+## RD contacts
+
+```{r}
+plot_mat(malat1[idx,idx], idx, main = 'Malat1', genes = g, text=T)
+```
+
+## DD contacts
+
+```{r}
+plot_mat(tot, idx, main = 'Malat1 region DNA-DNA contacts', max=100, genes = g)
+```
+
+## Normalized DD contacts
+
+
+```{r}
+norm_tot <- dcon:::normalize_hic(tot, gamma=0.8)
+plot_mat(norm_tot, idx, main = 'Malat1 region DNA-DNA contacts, normalized')
+```
+
+
+## Deconvolved 1D no offset
+
+```{r}
+mat <- malat1[idx,idx]
+y1 <- rowSums(mat)
+fit1 <- dcon:::fit_decon(y1, norm_tot, df = 40)
+data.frame(obs = y1, fit = exp(fit1$est), pos = (windows[idx,] %>% pull(start))/1e6) %>%
+  pivot_longer(cols = c(obs, fit), names_to = 'type', values_to = 'value') %>%
+  ggplot(aes(x = pos, y = value)) +
+  geom_hline(yintercept=0) +
+  geom_point(aes(color = type)) +
+  geom_line(aes(color = type)) +
+  scale_color_tableau() +
+  geom_segment(data = g, aes(x = start, xend = end, y = -250, yend=-250), size=2, color='blue', position=position_jitter(height=150, seed=1)) +
+  geom_text(data = g, aes(x = (start+end)/2, y = -300, label = gene), position=position_jitter(height=150, seed=1), size=3) +
+  theme_classic()
+```
+
+## Deconvolved 2D no offset
+
+```{r}
+res <- exp(matrix(data = rep(fit1$est, length(y1)), nrow=length(y1), ncol=length(y1)) + 
+             t(matrix(data = rep(fit1$est, length(y1)), nrow = length(y1), ncol = length(y1))))
+plot_mat(res, idx, genes = g)
+```
+
+
+## Deconvolved 1D with offset
+
+```{r}
+off <- offset$count[idx]
+off[off==0] <- 1
+fit2 <- dcon:::fit_decon(y1, norm_tot, df = 40, offset = off)
+data.frame(obs = y1/900, fit = exp(fit2$est), pos = (windows[idx,] %>% pull(start))/1e6) %>%
+  pivot_longer(cols = c(obs, fit), names_to = 'type', values_to = 'value') %>%
+  ggplot(aes(x = pos, y = value)) +
+  geom_hline(yintercept=0) +
+  geom_point(aes(color = type)) +
+  geom_line(aes(color = type)) +
+  scale_color_tableau() +
+  geom_segment(data = g, aes(x = start, xend = end, y = -0.5, yend=-0.5), size=2, color='blue', position=position_jitter(height=0.5, seed=1)) +
+  geom_text(data = g, aes(x = (start+end)/2, y = -.55, label = gene), position=position_jitter(height=0.5, seed=1), size=3) +
+  theme_classic() +
+  xlab('position (mb)')
+```
+
+## Deconvolved 2D with offset
+
+```{r}
+res <- exp(matrix(data = rep(fit2$est, length(y1)), nrow=length(y1), ncol=length(y1)) + 
+             t(matrix(data = rep(fit2$est, length(y1)), nrow = length(y1), ncol = length(y1))))
+plot_mat(res, idx, genes = g)
+```
+
+
+# Neat1
+
+## Import ChIRP
+
+```{r}
+chirp <- fread('/rafalab/lzou/chirp/GSE199265_CCE-ESC-Neat1_mm10_liftover.bed', col.names = c('chrom','start','end','name','score'))
+chirp <- chirp %>% filter(chrom == 'chr19', start >= 5.6e6, start < 6e6) %>% mutate(start=start/1e6, end=end/1e6)
+```
+
+```{r}
+neat1 <- readMM('/rafalab/lzou/rdsprite/dna_matrix/Neat1_DNA_matrix_count_RNA_10000_clusters_2-100000.mtx')
+neat1 <- neat1 + t(neat1) - Diagonal(x=diag(neat1))
+```
+
+```{r}
+idx <- windows$idx[which(windows$chrom=='chr19' & windows$start >= 5.6e6 & windows$end <= 6e6)]
+tot <- total_DNA[idx,idx]
+g <- get_genes(idx)
+g$start <- g$start/1e6
+g$end <- g$end/1e6
+g <- g %>% filter(grepl('Map|Pcn|Rela|Sipa|Ehbp|Ltbp|Scyl|Malat|Neat|Slc|Tig', gene))
+```
+
+## RD contacts
+
+```{r}
+plot_mat(neat1[idx,idx], idx, main = 'Neat1', genes = g,text=T)
+ggsave('rdsprite-neat1-before.pdf', height=4, width=4)
+```
+
+## DD contacts
+
+```{r}
+plot_mat(tot, idx, main = 'Neat1 region DNA-DNA contacts', max=100, genes = g)
+ggsave('rdsprite-neat1-DD.pdf', height=4, width=4)
+```
+
+
+## Normalized DD contacts
+
+
+```{r}
+norm_tot <- dcon:::normalize_hic(tot, gamma=0.8)
+plot_mat(norm_tot, idx, main = 'Neat1 region DNA-DNA contacts, normalized')
+```
+
+## Deconvolved 1D no offset
+
+```{r}
+mat <- neat1[idx,idx]
+y1 <- rowSums(mat)
+fit1 <- dcon:::fit_decon(y1, norm_tot, df = 20)
+data.frame(obs = y1, fit = exp(fit1$est), pos = (windows[idx,] %>% pull(start))/1e6) %>%
+  pivot_longer(cols = c(obs, fit), names_to = 'type', values_to = 'value') %>%
+  ggplot(aes(x = pos, y = value)) +
+  geom_hline(yintercept=0) +
+  geom_point(aes(color = type)) +
+  geom_line(aes(color = type)) +
+  scale_color_tableau() +
+  geom_segment(data = g, aes(x = start, xend = end, y = -250, yend=-250), size=2, color='blue', position=position_jitter(height=150, seed=1)) +
+  geom_text(data = g, aes(x = (start+end)/2, y = -300, label = gene), position=position_jitter(height=150, seed=1), size=3) +
+  theme_classic()
+```
+
+
+## Deconvolved 2D no offset
+
+```{r}
+res <- exp(matrix(data = rep(fit1$est, length(y1)), nrow=length(y1), ncol=length(y1)) + 
+             t(matrix(data = rep(fit1$est, length(y1)), nrow = length(y1), ncol = length(y1))))
+plot_mat(res, idx, genes = g)
+ggsave('rdsprite-neat1-after.pdf', height=4, width=4)
+```
+
+## Deconvolved 1D with offset
+
+```{r}
+off <- offset$count[idx]
+off[off==0] <- 1
+fit2 <- dcon:::fit_decon(y1, norm_tot, df = 40, offset = off)
+data.frame(obs = y1/900, fit = exp(fit2$est), pos = (windows[idx,] %>% pull(start))/1e6) %>%
+  pivot_longer(cols = c(obs, fit), names_to = 'type', values_to = 'value') %>%
+  ggplot(aes(x = pos, y = value)) +
+  geom_hline(yintercept=0) +
+  geom_point(aes(color = type)) +
+  geom_line(aes(color = type)) +
+  scale_color_tableau() +
+  geom_segment(data = g, aes(x = start, xend = end, y = -0.5, yend=-0.5), size=2, color='blue', position=position_jitter(height=0.5, seed=1)) +
+  geom_text(data = g, aes(x = (start+end)/2, y = -.55, label = gene), position=position_jitter(height=0.5, seed=1), size=3) +
+  theme_classic() +
+  xlab('position (mb)')
+```
+
+## Deconvolved 2D with offset
+
+```{r}
+res <- exp(matrix(data = rep(fit2$est, length(y1)), nrow=length(y1), ncol=length(y1)) + 
+             t(matrix(data = rep(fit2$est, length(y1)), nrow = length(y1), ncol = length(y1))))
+plot_mat(res, idx, genes = g, bedtrack = chirp, fill = 'forestgreen')
+ggsave('rdsprite-neat1-after-offset.pdf', height=4, width=4)
+```
+
+
+# Xist
+
+```{r}
+xist <- readRDS('/rafalab/lzou/rdsprite/dna_matrix/Xist_2-100000_chrX.rds')
+xist <- xist + t(xist) - Diagonal(x=diag(xist))
+```
+
+```{r}
+idx <- windows$idx[which(windows$chrom=='chrX' & windows$start >= 80e6 & windows$end <= 120e6)]
+idx2 <- idx-min(windows$idx[which(windows$chrom=='chrX')])+1
+tot <- total_DNA[idx,idx]
+g <- get_genes(idx)
+g$start <- g$start/1e6
+g$end <- g$end/1e6
+g <- g %>% filter(!grepl('49305|Gm|Mir', gene))
+```
+
+## RD contacts
+
+```{r}
+plot_mat(xist[idx2,idx2], idx, main = 'Xist', text = F, max=200)
+ggsave('rdsprite-Xist-raw.pdf', height=4, width=5)
+```
+
+## DD contacts
+
+```{r}
+total_DNA <- readMM('/rafalab/lzou/rdsprite/dna_matrix/total_DD_DNA_matrix_10000_clusters_2-100000.mtx')
+total_DNA <- total_DNA + t(total_DNA) - Diagonal(x=diag(total_DNA))
+tot <- total_DNA[idx,idx]
+plot_mat(tot, idx, main = 'Xist region DNA-DNA contacts', max=10, genes = g)
+ggsave('rdsprite-Xist-DD.pdf', height=4, width=5)
+```
+
+
+## Normalized DD contacts
+
+```{r}
+norm_tot <- dcon:::normalize_hic(tot, gamma=0.8)
+plot_mat(norm_tot, idx, main = 'Xist region DNA-DNA contacts, normalized')
+```
+
+## Deconvolved 1D no offset
+
+```{r}
+mat <- xist[idx2,idx2]
+y1 <- rowSums(mat)
+fit1 <- dcon:::fit_decon(y1, norm_tot, df = 1000)
+data.frame(obs = y1, fit = exp(fit1$est), pos = (windows[idx,] %>% pull(start))/1e6) %>%
+  pivot_longer(cols = c(obs, fit), names_to = 'type', values_to = 'value') %>%
+  ggplot(aes(x = pos, y = value)) +
+  geom_hline(yintercept=0) +
+  geom_point(aes(color = type)) +
+  geom_line(aes(color = type)) +
+  scale_color_tableau() +
+  geom_segment(data = g, aes(x = start, xend = end, y = -50, yend=-50), size=2, color='blue', position=position_jitter(height=40, seed=1)) +
+  geom_text(data = g, aes(x = (start+end)/2, y = -60, label = gene), position=position_jitter(height=40, seed=1), size=3) +
+  theme_classic()
+```
+
+
+## save to look at in IGV
+
+```{r}
+data.frame(
+  chrom = 'chrX',
+  start = (windows[idx,] %>% pull(start)),
+  end = (windows[idx,] %>% pull(end)),
+  value = y1
+) %>%
+  write.table(file = 'xist_raw_90-120.bedgraph', quote = F, sep = '\t', row.names = F, col.names=F)
+data.frame(
+  chrom = 'chrX',
+  start = (windows[idx,] %>% pull(start)),
+  end = (windows[idx,] %>% pull(end)),
+  value = exp(fit1$est)
+) %>%
+  write.table(file = 'xist_fit_90-120-df1000-gamma0.8.bedgraph', quote = F, sep = '\t', row.names = F, col.names=F)
+```
+
+
+## Deconvolved 2D no offset
+
+```{r}
+res <- exp(matrix(data = rep(fit1$est, length(y1)), nrow=length(y1), ncol=length(y1)) + 
+             t(matrix(data = rep(fit1$est, length(y1)), nrow = length(y1), ncol = length(y1))))
+plot_mat(res, idx, genes = g)
+```
+
+
+
+
+# Alu/SINE
+
+```{r}
+sine <- readMM('/rafalab/lzou/rdsprite/dna_matrix/Alu,SINE|SINE,Alu_DNA_matrix_count_RNA_10000_clusters_2-100.mtx')
+sine <- sine + t(sine) - Diagonal(x=diag(sine))
+```
+
+```{r}
+idx <- windows$idx[which(windows$chrom=='chr19' & windows$start >= 5.6e6 & windows$end <= 6e6)]
+tot <- total_DNA[idx,idx]
+g <- get_rmsk(idx)
+g$start <- g$start/1e6
+g$end <- g$end/1e6
+g <- g %>% filter(grepl('SINE',gene))
+```
+
+## RD contacts
+
+```{r}
+plot_mat(sine[idx,idx], idx, main = 'Alu/SINE', genes = g, text = T)
+ggsave('rdsprite-alu-neat1-locus-before.pdf', height=4, width=4)
+```
+
+## DD contacts
+
+```{r}
+plot_mat(tot, idx, main = 'SINE region DNA-DNA contacts', max=100, genes = g)
+```
+
+
+## Normalized DD contacts
+
+```{r}
+norm_tot <- dcon:::normalize_hic(tot, gamma=0.8)
+plot_mat(norm_tot, idx, main = 'SINE region DNA-DNA contacts, normalized')
+```
+
+## Deconvolved 1D no offset
+
+```{r}
+mat <- sine[idx,idx]
+y1 <- rowSums(mat)
+fit1 <- dcon:::fit_decon(y1, norm_tot, df = 20)
+data.frame(obs = y1, fit = exp(fit1$est), pos = (windows[idx,] %>% pull(start))/1e6) %>%
+  pivot_longer(cols = c(obs, fit), names_to = 'type', values_to = 'value') %>%
+  ggplot(aes(x = pos, y = value)) +
+  geom_hline(yintercept=0) +
+  geom_point(aes(color = type)) +
+  geom_line(aes(color = type)) +
+  scale_color_tableau() +
+  geom_segment(data = g, aes(x = start, xend = end, y = -50, yend=-50), size=2, color='blue', position=position_jitter(height=40, seed=1)) +
+  geom_text(data = g, aes(x = (start+end)/2, y = -60, label = gene), position=position_jitter(height=40, seed=1), size=3) +
+  theme_classic()
+```
+
+## Deconvolved 2D no offset
+
+```{r}
+res <- exp(matrix(data = rep(fit1$est, length(y1)), nrow=length(y1), ncol=length(y1)) + 
+             t(matrix(data = rep(fit1$est, length(y1)), nrow = length(y1), ncol = length(y1))))
+plot_mat(res, idx, genes = g, text=T, main = 'Alu/SINE')
+ggsave('rdsprite-alu-neat1-locus-after.pdf', height=4, width=4)
+```
+
+
+## Deconvolved 1D with offset
+
+```{r}
+off <- offset$count[idx]
+off[off==0] <- 1
+fit2 <- dcon:::fit_decon(y1, norm_tot, df = 20, offset = off)
+data.frame(obs = y1/900, fit = exp(fit2$est), pos = (windows[idx,] %>% pull(start))/1e6) %>%
+  pivot_longer(cols = c(obs, fit), names_to = 'type', values_to = 'value') %>%
+  ggplot(aes(x = pos, y = value)) +
+  geom_hline(yintercept=0) +
+  geom_point(aes(color = type)) +
+  geom_line(aes(color = type)) +
+  scale_color_tableau() +
+  geom_segment(data = g, aes(x = start, xend = end, y = -0.5, yend=-0.5), size=2, color='blue', position=position_jitter(height=0.5, seed=1)) +
+  geom_text(data = g, aes(x = (start+end)/2, y = -.55, label = gene), position=position_jitter(height=0.5, seed=1), size=3) +
+  theme_classic() +
+  xlab('position (mb)')
+```
+
+## Deconvolved 2D with offset
+
+```{r}
+res <- exp(matrix(data = rep(fit2$est, length(y1)), nrow=length(y1), ncol=length(y1)) + 
+             t(matrix(data = rep(fit2$est, length(y1)), nrow = length(y1), ncol = length(y1))))
+plot_mat(res, idx, genes = g, fill = 'forestgreen')
+ggsave('rdsprite-alu-neat1-locus-after-offset.pdf', height=4, width=4)
+sine_rate <- res
+```
+
+
+# LINE1
+
+```{r}
+line1 <- readMM('/rafalab/lzou/rdsprite/dna_matrix/L1,LINE|LINE,L1_DNA_matrix_count_RNA_10000_clusters_2-100.mtx')
+line1 <- line1 + t(line1) - Diagonal(x=diag(line1))
+```
+
+```{r}
+idx <- windows$idx[which(windows$chrom=='chr19' & windows$start >= 5.6e6 & windows$end <= 6e6)]
+tot <- total_DNA[idx,idx]
+g <- get_rmsk(idx)
+g$start <- g$start/1e6
+g$end <- g$end/1e6
+g <- g %>% filter(grepl('L1',gene))
+```
+
+## RD contacts
+
+```{r}
+plot_mat(line1[idx,idx], idx, main = 'L1', genes = g, text = T)
+ggsave('rdsprite-L1-neat1-locus-before.pdf', height=4, width=4)
+```
+
+
+
+## DD contacts
+
+```{r}
+plot_mat(tot, idx, main = 'L1 region DNA-DNA contacts', max=100, genes = g)
+```
+
+## Normalized DD contacts
+
+```{r}
+norm_tot <- dcon:::normalize_hic(tot, gamma=0.8)
+plot_mat(norm_tot, idx, main = 'L1 region DNA-DNA contacts, normalized')
+```
+
+
+
+## Deconvolved 1D no offset
+
+```{r}
+mat <- line1[idx,idx]
+y1 <- rowSums(mat)
+fit1 <- dcon:::fit_decon(y1, norm_tot, df = 20)
+data.frame(obs = y1, fit = exp(fit1$est), pos = (windows[idx,] %>% pull(start))/1e6) %>%
+  pivot_longer(cols = c(obs, fit), names_to = 'type', values_to = 'value') %>%
+  ggplot(aes(x = pos, y = value)) +
+  geom_hline(yintercept=0) +
+  geom_point(aes(color = type)) +
+  geom_line(aes(color = type)) +
+  scale_color_tableau() +
+  geom_segment(data = g, aes(x = start, xend = end, y = -50, yend=-50), size=2, color='blue', position=position_jitter(height=40, seed=1)) +
+  geom_text(data = g, aes(x = (start+end)/2, y = -60, label = gene), position=position_jitter(height=40, seed=1), size=3) +
+  theme_classic()
+```
+
+
+## Deconvolved 2D no offset
+
+```{r}
+res <- exp(matrix(data = rep(fit1$est, length(y1)), nrow=length(y1), ncol=length(y1)) + 
+             t(matrix(data = rep(fit1$est, length(y1)), nrow = length(y1), ncol = length(y1))))
+plot_mat(res, idx, genes = g, text=T)
+ggsave('rdsprite-l1-neat1-locus-after.pdf', height=4, width=4)
+```
+
+
+## Deconvolved 1D with offset
+
+```{r}
+off <- offset$count[idx]
+off[off==0] <- 1
+fit2 <- dcon:::fit_decon(y1, norm_tot, df = 20, offset = off)
+data.frame(obs = y1/900, fit = exp(fit2$est), pos = (windows[idx,] %>% pull(start))/1e6) %>%
+  pivot_longer(cols = c(obs, fit), names_to = 'type', values_to = 'value') %>%
+  ggplot(aes(x = pos, y = value)) +
+  geom_hline(yintercept=0) +
+  geom_point(aes(color = type)) +
+  geom_line(aes(color = type)) +
+  scale_color_tableau() +
+  geom_segment(data = g, aes(x = start, xend = end, y = -0.5, yend=-0.5), size=2, color='blue', position=position_jitter(height=0.5, seed=1)) +
+  geom_text(data = g, aes(x = (start+end)/2, y = -.55, label = gene), position=position_jitter(height=0.5, seed=1), size=3) +
+  theme_classic() +
+  xlab('position (mb)')
+```
+
+
+## Deconvolved 2D with offset
+
+```{r}
+res <- exp(matrix(data = rep(fit2$est, length(y1)), nrow=length(y1), ncol=length(y1)) + 
+             t(matrix(data = rep(fit2$est, length(y1)), nrow = length(y1), ncol = length(y1))))
+plot_mat(res, idx, genes = g, fill = 'forestgreen')
+ggsave('rdsprite-l1-neat1-locus-after-offset.pdf', height=4, width=4)
+l1_rate <- res
+```
+
+## Ratio L1/B1
+
+```{r}
+plot_mat(l1_rate/sine_rate, idx, genes=g, fill = 'purple')
+```
+
+
+
+# L1Md
+
+```{r}
+line1 <- readMM('/rafalab/lzou/rdsprite/dna_matrix/L1Md_DNA_matrix_count_RNA_10000_clusters_2-100.mtx')
+line1 <- line1 + t(line1) - Diagonal(x=diag(line1))
+```
+
+```{r}
+idx <- windows$idx[which(windows$chrom=='chr19' & windows$start >= 7.5e6 & windows$end <= 8e6)]
+tot <- total_DNA[idx,idx]
+g <- get_rmsk(idx)
+g$start <- g$start/1e6
+g$end <- g$end/1e6
+g <- g %>% filter(grepl('L1Md_A|L1Md_T',gene))
+g2 <- get_genes(idx)
+g2$start <- g2$start/1e6
+g2$end <- g2$end/1e6
+g <- g %>% bind_rows(g2)
+```
+
+## RD contacts
+
+```{r}
+plot_mat(line1[idx,idx], idx, main = 'L1Md', genes = g)
+```
+
+
+## DD contacts
+
+```{r}
+plot_mat(tot, idx, main = 'L1Md region DNA-DNA contacts', max=100, genes = g)
+```
+
+
+## Normalized DD contacts
+
+```{r}
+norm_tot <- dcon:::normalize_hic(tot, gamma=0.8)
+plot_mat(norm_tot, idx, main = 'L1Md region DNA-DNA contacts, normalized')
+```
+
+
+## Deconvolved 1D no offset
+
+```{r}
+mat <- line1[idx,idx]
+y1 <- rowSums(mat)
+fit1 <- dcon:::fit_decon(y1, norm_tot, df = 10)
+data.frame(obs = y1, fit = exp(fit1$est), pos = (windows[idx,] %>% pull(start))/1e6) %>%
+  pivot_longer(cols = c(obs, fit), names_to = 'type', values_to = 'value') %>%
+  ggplot(aes(x = pos, y = value)) +
+  geom_hline(yintercept=0) +
+  geom_point(aes(color = type)) +
+  geom_line(aes(color = type)) +
+  scale_color_tableau() +
+  geom_segment(data = g, aes(x = start, xend = end, y = -250, yend=-250), size=2, color='blue', position=position_jitter(height=150, seed=1)) +
+  geom_text(data = g, aes(x = (start+end)/2, y = -300, label = gene), position=position_jitter(height=150, seed=1), size=3) +
+  theme_classic()
+```
+
+
+## Deconvolved 2D no offset
+
+```{r}
+res <- exp(matrix(data = rep(fit1$est, length(y1)), nrow=length(y1), ncol=length(y1)) + 
+             t(matrix(data = rep(fit1$est, length(y1)), nrow = length(y1), ncol = length(y1))))
+plot_mat(res, idx, genes = g)
+```
+
+
+## Deconvolved 1D with offset
+
+```{r}
+off <- offset$count[idx]
+off[off==0] <- 1
+fit2 <- dcon:::fit_decon(y1, norm_tot, df = 10, offset = off)
+data.frame(obs = y1/900, fit = exp(fit2$est), pos = (windows[idx,] %>% pull(start))/1e6) %>%
+  pivot_longer(cols = c(obs, fit), names_to = 'type', values_to = 'value') %>%
+  ggplot(aes(x = pos, y = value)) +
+  geom_hline(yintercept=0) +
+  geom_point(aes(color = type)) +
+  geom_line(aes(color = type)) +
+  scale_color_tableau() +
+  geom_segment(data = g, aes(x = start, xend = end, y = -0.5, yend=-0.5), size=2, color='blue', position=position_jitter(height=0.5, seed=1)) +
+  geom_text(data = g, aes(x = (start+end)/2, y = -.55, label = gene), position=position_jitter(height=0.5, seed=1), size=3) +
+  theme_classic() +
+  xlab('position (mb)')
+```
+
+## Deconvolved 2D with offset
+
+```{r}
+res <- exp(matrix(data = rep(fit2$est, length(y1)), nrow=length(y1), ncol=length(y1)) + 
+             t(matrix(data = rep(fit2$est, length(y1)), nrow = length(y1), ncol = length(y1))))
+plot_mat(res, idx, genes = g)
+```
+
+
+# Alu/SINE
+
+
+

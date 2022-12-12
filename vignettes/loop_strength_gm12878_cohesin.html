@@ -241,7 +241,8 @@ library(GenomicRanges)</code></pre>
 
 
 current_chrom &lt;- params$chrom
-RESOLUTION &lt;- 5000</code></pre>
+RESOLUTION &lt;- 5000
+MIN_DIST &lt;- 20</code></pre>
 <pre class="r"><code># Load hichip matrices and coordinates
 chip.df &lt;- strawr::straw(&quot;NONE&quot;, &quot;/rafalab/lzou/hichip_gm12878/GM_HiChIP_cohesin_r1.hic&quot;, gsub('chr','',current_chrom), gsub('chr','',current_chrom), &quot;BP&quot;, RESOLUTION)
 chip.df$x &lt;- chip.df$x/RESOLUTION
@@ -258,7 +259,8 @@ coords &lt;- coords[seqnames(coords)==current_chrom,]
 coords$id &lt;- seq(1,length(coords))
 # Load in HiC matrix
 hic &lt;- strawr::straw(&quot;NONE&quot;, &quot;/rafalab/lzou/hichip_gm12878/ENCFF718AWL.hic&quot;, gsub('chr','',current_chrom), gsub('chr','',current_chrom), &quot;BP&quot;, RESOLUTION)
-hic &lt;- sparseMatrix(i = hic$x/RESOLUTION+1, j = hic$y/RESOLUTION+1, x = hic$counts)
+hic &lt;- bind_rows(hic, hic %&gt;% filter(x!=y) %&gt;% dplyr::rename(y=x, x=y))
+hic &lt;- sparseMatrix(i = hic$x/RESOLUTION+1, j = hic$y/RESOLUTION+1, x = hic$counts, dims=c(length(coords), length(coords)))
 # Load in loops
 loops &lt;- fread('/rafalab/lzou/hichip_gm12878/fithichip_gm12878_cohesin_loose.csv')
 colnames(loops)[1:5] &lt;- c('chr1','s1','e1','s2','e2')
@@ -268,28 +270,12 @@ loops$e1 &lt;- floor(loops$e1/RESOLUTION)*RESOLUTION
 loops$e2 &lt;- floor(loops$e2/RESOLUTION)*RESOLUTION
 loops$chr2 &lt;- current_chrom
 loops &lt;- loops %&gt;% filter(chr1==current_chrom)
-loops$type &lt;- 'real'
-# add in random pairwise combinations that are not in the data i.e. 'fake' loops
-set.seed(137)
-fake_loops &lt;- data.frame(
-  chr1 = current_chrom,
-  s1 = sample(seq(min(loops$s1),max(loops$s1),by=RESOLUTION), 1e4, replace=T),
-  chr2 = current_chrom,
-  s2 = sample(seq(min(loops$s2),max(loops$s2),by=RESOLUTION), 1e4, replace=T)
-) %&gt;%
-  filter(s1&lt;=s2) %&gt;%
-  mutate(e1=s1+RESOLUTION, e2=s2+RESOLUTION) %&gt;%
-  dplyr::select(chr1, s1, e1, chr2, s2, e2) %&gt;%
-  mutate(pval = 1, type = 'fake') %&gt;%
-  distinct()
-fake_loops &lt;- fake_loops[!(paste0(fake_loops$s1,',',fake_loops$s2) %in% paste0(loops$s1,',',loops$s2)),]
-loops &lt;- bind_rows(loops, fake_loops)
 loops &lt;- loops %&gt;% arrange(s1,s2)
 loops$bin1 &lt;- loops[,1:3] %&gt;% dplyr::rename(seqnames=chr1, start=s1, end=e1) %&gt;% left_join(as.data.frame(coords)) %&gt;% pull(id)</code></pre>
 <pre><code>## Joining, by = c(&quot;seqnames&quot;, &quot;start&quot;, &quot;end&quot;)</code></pre>
 <pre class="r"><code>loops$bin2 &lt;- loops[,c(1,4,5)] %&gt;% dplyr::rename(seqnames=chr1, start=s2, end=e2) %&gt;% left_join(as.data.frame(coords)) %&gt;% pull(id)</code></pre>
 <pre><code>## Joining, by = c(&quot;seqnames&quot;, &quot;start&quot;, &quot;end&quot;)</code></pre>
-<pre class="r"><code>loops &lt;- loops %&gt;% filter(bin2-bin1&gt;3)</code></pre>
+<pre class="r"><code>loops &lt;- loops %&gt;% filter(bin2-bin1&gt;MIN_DIST)</code></pre>
 <pre class="r"><code>myDcon &lt;- Dcon(mat = list(gm12878_1=chip1, gm12878_2=chip2),
                coords = coords,
                loops = loops,
@@ -298,10 +284,10 @@ myDcon</code></pre>
 <pre><code>## Dcon object
 ## Number of matrices: 2
 ## Resolution: 5000bp
-## Number of loops: 11639
+## Number of loops: 6752
 ## HiC dimensions: 
 ## Not deconvolved</code></pre>
-<pre class="r"><code>myDconvolved &lt;- dcon::deconvolve(myDcon, gamma=0.5)</code></pre>
+<pre class="r"><code>myDconvolved &lt;- dcon::deconvolve(myDcon, gamma=0.5, pad=5, save_mat = F)</code></pre>
 <pre><code>## Found loops - assuming that each matrix in mat is 
 ##                       a hichip matrix</code></pre>
 <pre><code>## 
@@ -647,7 +633,7 @@ myDcon</code></pre>
   |======================================================================|  99%
   |                                                                            
   |======================================================================| 100%</code></pre>
-<pre class="r"><code>saveRDS(myDconvolved, file=paste0('gm12878_5000_results_',current_chrom,'.rds'))</code></pre>
+<pre class="r"><code>saveRDS(myDconvolved, file=paste0('gm12878_5000_results_gamma0.5_',current_chrom,'.rds'))</code></pre>
 
 
 

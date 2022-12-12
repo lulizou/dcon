@@ -721,7 +721,7 @@ matchdf_not <- matchdf_not[!(matchdf_not$gene %in% c(matchdf_new$gene, matchdf_s
 matchdf_new <- matchdf_new[!(matchdf_new$gene %in% c(matchdf_stay$gene)),]
 matchdf_other <- matchdf_other[!matchdf_other$gene %in% c(matchdf_new$gene, matchdf_stay$gene, matchdf_not$gene),]
 
-matchdf <- bind_rows(matchdf_stay, matchdf_new, matchdf_not) %>%
+matchdf <- bind_rows(matchdf_stay, matchdf_new, matchdf_not, matchdf_other) %>%
   select(-queryHits) %>%
   distinct() %>%
   filter(!is.na(gene_lfc)) %>%
