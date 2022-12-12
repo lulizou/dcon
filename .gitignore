@@ -10,3 +10,4 @@ vignettes/*.out
 vignettes/*.html
 vignettes/*.bed*
 vignettes/*.gz
+docs
