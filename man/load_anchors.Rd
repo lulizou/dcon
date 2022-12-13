@@ -7,7 +7,14 @@ If there are multiple anchor files, can decide whether to use all unique
 entries or only take ones in both (intersection). Default is to take the
 intersection.}
 \usage{
-load_anchors(..., coords, type = "fithichip", use = "intersection")
+load_anchors(
+  ...,
+  coords,
+  type = "fithichip",
+  use = "union",
+  resolution = NULL,
+  chrom = NULL
+)
 }
 \arguments{
 \item{...}{one or more file names to input.}

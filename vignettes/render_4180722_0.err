@@ -1,9 +1,0 @@
-
-
-processing file: loop_strength_gm12878_cohesin.Rmd
-Quitting from lines 90-91 (loop_strength_gm12878_cohesin.Rmd) 
-Error: object 'chip' not found
-In addition: Warning message:
-In png(..., res = dpi, units = "in") :
-  unable to open connection to X11 display ''
-Execution halted

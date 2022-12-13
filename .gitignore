@@ -3,11 +3,5 @@
 *.RData
 .Ruserdata
 *.rds
-vignettes/*.pdf
-vignettes/*.png
-vignettes/*.err
-vignettes/*.out
-vignettes/*.html
-vignettes/*.bed*
-vignettes/*.gz
+paper/*
 docs

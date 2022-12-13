@@ -4,7 +4,17 @@
 \alias{deconvolve,Dcon-method}
 \title{Optimizes the log-likelihood using BFGS and returns the deconvolved signal.}
 \usage{
-\S4method{deconvolve}{Dcon}(object, df = 21, gamma = 0.5, pad = 10)
+\S4method{deconvolve}{Dcon}(
+  object,
+  df = NULL,
+  gamma = 0.5,
+  pad = 10,
+  save_mat = F,
+  store_sum = F,
+  pad_center = F,
+  fail_before = 20,
+  fail_after = 5
+)
 }
 \arguments{
 \item{df}{integer, sets the number of degrees of freedom to use for the

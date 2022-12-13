@@ -143,6 +143,7 @@ pad_windows <- function(granges, window_size=5e4, bin_size=2500) {
   granges <- trim(granges)
   return(granges)
 }
+
 normalize_hic <- function(M, gamma=1, threshold = 5) {
   # threshold exists so that low count columns won't get deconvolved 
   M <- as.matrix(M)
@@ -158,31 +159,7 @@ normalize_hic <- function(M, gamma=1, threshold = 5) {
   return(ILD)
 }
 
-fit_decon <- function(reads, D, df=NULL, offset=NULL) {
-  if (is.null(df)) {
-    df <- length(reads)
-  }
-  B <- construct_basis(1:length(reads), df=df)
-  if (is.null(offset)) {
-    starting_a <- rep(0, df)
-  } else {
-    starting_a <- rep(-mean(log(offset)), df)
-  }
-  if (any(offset==0)) {
-    stop('some values of offset are 0; consider omitting or adding 1')
-  }
-  if (!is.null(offset)) {
-    D <- offset*D
-  }
-  o <- optim(par=starting_a, loglik, y=reads, D=D, B=B, method='BFGS')
-  a <- o$par
-  # get hessian
-  H <- hess_a(y=reads, D=D, B=B, a=a)
-  Sigma <- solve(psd(H))
-  BSigmaB <- B%*%Sigma%*%t(B)
-  Bavars <- diag(BSigmaB)
-  return(list(a=a, B=B, est=as.numeric(B%*%a), var = Bavars))
-}
+
 
 decon_to_2d <- function(decon1, decon2, mat) {
   new_mat <- (decon1$est/sum(decon1$est))%*%(t(decon2$est)/sum(decon2$est))

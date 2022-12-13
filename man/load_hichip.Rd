@@ -6,13 +6,16 @@
 type specifies what type the file is. Currently only supports the hic-pro
 .matrix format. Should be made from allValidPairs.}
 \usage{
-load_hichip(filename, coords, type = "hic-pro", diagonal = 3)
+load_hichip(filename, coords, chrom = NULL, type = "hic-pro", diagonal = 3)
 }
 \arguments{
 \item{filename}{specifies the name of the file to load in}
 
 \item{coords}{specifies the total dimensions of the matrix, created from bins
 using load_coords.}
+
+\item{chrom}{specifies which chromosome to subset to based on coords. Default
+is NULL so it will return the whole thing.}
 
 \item{type}{specifies the file type}
 
