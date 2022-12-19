@@ -144,21 +144,6 @@ pad_windows <- function(granges, window_size=5e4, bin_size=2500) {
   return(granges)
 }
 
-normalize_hic <- function(M, gamma=1, threshold = 5) {
-  # threshold exists so that low count columns won't get deconvolved 
-  M <- as.matrix(M)
-  thresh_idx <- which(colSums(M)<=threshold)
-  if (length(thresh_idx)>0) {
-    for (id in thresh_idx) {
-      M[,id] <- 0 # 0 out the column
-      M[id,id] <- 1 # make the diagonal = 1
-    }
-  }
-  Dsmoothnorm <- sweep(M,2,colSums(M),'/')
-  ILD <- (1-gamma)*diag(1,nrow=nrow(Dsmoothnorm))+gamma*Dsmoothnorm
-  return(ILD)
-}
-
 
 
 decon_to_2d <- function(decon1, decon2, mat) {

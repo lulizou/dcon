@@ -14,6 +14,8 @@
 #' @return a list containing `a`, the estimated coefficients, `B`, the
 #' basis functions, `est` the estimated log-scale signal and `var` the variance
 #' associated with the estimates.
+#' 
+#' @export
 
 fit_decon <- function(reads, D, df=NULL, offset=NULL) {
   if (is.null(df)) {
