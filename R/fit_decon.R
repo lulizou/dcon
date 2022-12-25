@@ -17,15 +17,20 @@
 #' 
 #' @export
 
-fit_decon <- function(reads, D, df=NULL, offset=NULL) {
+fit_decon <- function(reads, D, df=NULL, offset=NULL, initialize='') {
   if (is.null(df)) {
     df <- length(reads)
   }
   B <- construct_basis(1:length(reads), df=df)
-  if (is.null(offset)) {
-    starting_a <- rep(0, df)
-  } else {
+  if (initialize == 'glm') {
+    myfit <- glm(y ~ .-1, family = 'poisson', data = cbind(data.frame(y=reads), B))
+    starting_a <- coef(myfit)
+    starting_a[starting_a < -10] <- -10
+    starting_a[starting_a > 10] <- 10
+  } else if (!is.null(offset)) {
     starting_a <- rep(-mean(log(offset)), df)
+  } else {
+    starting_a <- rep(0, df)
   }
   if (any(offset==0)) {
     stop('some values of offset are 0; consider omitting or adding 1')
@@ -33,7 +38,7 @@ fit_decon <- function(reads, D, df=NULL, offset=NULL) {
   if (!is.null(offset)) {
     D <- offset*D
   }
-  o <- optim(par=starting_a, loglik, y=reads, D=D, B=B, method='BFGS')
+  o <- optim(par=starting_a, fn = loglik, gr = deriv_a, y=reads, D=D, B=B, method='BFGS')
   a <- o$par
   # get hessian
   H <- hess_a(y=reads, D=D, B=B, a=a)
