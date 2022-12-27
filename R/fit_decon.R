@@ -10,6 +10,8 @@
 #' @param df the degrees of freedom for the Gaussian basis functions. The default
 #' is the length of reads.
 #' @param offset a vector of offset counts the same length as reads.
+#' @param hessian whether or not to compute the hessian at the estiamted
+#' coefficients; default is F.
 #' 
 #' @return a list containing `a`, the estimated coefficients, `B`, the
 #' basis functions, `est` the estimated log-scale signal and `var` the variance
@@ -17,17 +19,12 @@
 #' 
 #' @export
 
-fit_decon <- function(reads, D, df=NULL, offset=NULL, initialize='') {
+fit_decon <- function(reads, D, df=NULL, offset=NULL,hessian=F) {
   if (is.null(df)) {
     df <- length(reads)
   }
   B <- construct_basis(1:length(reads), df=df)
-  if (initialize == 'glm') {
-    myfit <- glm(y ~ .-1, family = 'poisson', data = cbind(data.frame(y=reads), B))
-    starting_a <- coef(myfit)
-    starting_a[starting_a < -10] <- -10
-    starting_a[starting_a > 10] <- 10
-  } else if (!is.null(offset)) {
+  if (!is.null(offset)) {
     starting_a <- rep(-mean(log(offset)), df)
   } else {
     starting_a <- rep(0, df)
@@ -40,10 +37,13 @@ fit_decon <- function(reads, D, df=NULL, offset=NULL, initialize='') {
   }
   o <- optim(par=starting_a, fn = loglik, gr = deriv_a, y=reads, D=D, B=B, method='BFGS')
   a <- o$par
-  # get hessian
-  H <- hess_a(y=reads, D=D, B=B, a=a)
-  Sigma <- solve(psd(H))
-  BSigmaB <- B%*%Sigma%*%t(B)
-  Bavars <- diag(BSigmaB)
+  Bavars <- NULL
+  if (hessian) {
+    # get hessian
+    H <- hess_a(y=reads, D=D, B=B, a=a)
+    Sigma <- solve(psd(H))
+    BSigmaB <- B%*%Sigma%*%t(B)
+    Bavars <- diag(BSigmaB)
+  } 
   return(list(a=a, B=B, est=as.numeric(B%*%a), var = Bavars))
 }

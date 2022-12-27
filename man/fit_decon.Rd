@@ -4,7 +4,7 @@
 \alias{fit_decon}
 \title{Fit the 1D deconvolution model}
 \usage{
-fit_decon(reads, D, df = NULL, offset = NULL)
+fit_decon(reads, D, df = NULL, offset = NULL, hessian = F)
 }
 \arguments{
 \item{reads}{a vector of counts}

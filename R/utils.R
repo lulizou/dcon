@@ -178,13 +178,14 @@ construct_basis <- function(interval, df = NULL) {
 #' assuming that the coefficients are normally distributed with specified
 #' mean and variance
 simulate_log_rate <- function(len, df, alpha_mean = -1, alpha_sd = 2,
-                              npeaks = NULL) {
+                              seed = 1, npeaks = NULL) {
+  set.seed(seed)
   B <- construct_basis(1:len, df = df)
   if (is.null(npeaks)) {
     a <- rnorm(n = df, mean = alpha_mean, sd = alpha_sd)
   } else {
-    a <- rep(-2, len)
-    peak_locations <- 1+c(1:npeaks)*floor(len/(npeaks+1))
+    a <- rep(0, df)
+    peak_locations <- 1+c(1:npeaks)*floor(df/(npeaks+1))
     a[peak_locations] <- 5
   }
   return(list(B = B, a = a))
@@ -217,21 +218,30 @@ simulate_D <- function(len, decay = 1/3, gamma = 1, add_noise = NULL,
     D <- D*add_noise*5
     D <- D + matrix(rpois(len*len, add_noise), nrow = len, ncol = len)
   }
-  
-  return(normalize_hic(D, gamma = gamma))
+  return(D)
 }
 
 #' Simulate the Poisson-distributed outcome y 
-simulate_y <- function(len, df, D = NULL, alpha_mean = -1, alpha_sd = 2,
-                       decay = 1/3, gamma = 1, npeaks = NULL) {
-  log_rate_params <- simulate_log_rate(len, df, alpha_mean, alpha_sd, npeaks = npeaks)
+simulate_y <- function(len, df, D = NULL, normalized = T,
+                       alpha_mean = -1, alpha_sd = 2,
+                       decay = 1/3, gamma = 1, npeaks = NULL,
+                       seed = 1) {
+  log_rate_params <- simulate_log_rate(len, df, alpha_mean, alpha_sd, 
+                                       seed = seed, npeaks = npeaks)
   if (is.null(D)) {
     D <- simulate_D(len, decay, gamma)
+    Dnorm <- normalize_hic(D, gamma=gamma)
+  } else {
+    if (!normalized) {
+      Dnorm <- normalize_hic(D, gamma=gamma)
+    } else {
+      Dnorm <- D
+    }
   }
   B <- log_rate_params$B
   a <- log_rate_params$a
-  y <- rpois(n = len, lambda = D%*%exp(B%*%a))
-  return(list(y = y, D = D, B = B, a = a))
+  y <- rpois(n = len, lambda = Dnorm%*%exp(B%*%a))
+  return(list(y = y, D = D, Dnorm = Dnorm, B = B, a = a))
 }
 
 

@@ -1,0 +1,195 @@
+---
+title: "Deconvolution in 1D"
+format: gfm
+editor: source
+---
+
+This vignette walks through deconvolution in 1D.
+
+```{r}
+library(data.table)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(dcon)
+set.seed(13579)
+```
+
+# Quick start
+
+We first provide a quick example to show how the method works. For more
+details, see everything below the quick start section.
+
+Here, we use a small sample of the
+RD-SPRITE data 
+([GSE151515](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE151515)).
+
+We focus on the lncRNA \textit{Airn} which is a part of the \textit{Igf2r}
+imprinted cluster on chromosome 17 (mm10) and is thought to orchestrate 
+silencing of the gene  \textit{Slc22a3}.
+
+
+```{r load-data}
+airn <- fread('/rafalab/lzou/rdsprite/count_windows/Airn_RNA_count_windows_10000_clusters_2-1000_chr17_129S1_SvImJ.csv') |>
+  filter(chrom=='chr17')
+```
+
+```{r, fig.height=3, fig.width=8}
+airn |>
+  filter(start <= 30e6) |>
+  ggplot(aes(x = start/1e6, y = count)) +
+  geom_rect(xmin = 12739311/1e6, xmax = 12861884/1e6,
+            ymin = 0, ymax = max(airn$count),
+            fill = 'lightpink') +
+  geom_rect(xmin = 12417972/1e6, xmax = 12509704/1e6,
+            ymin = 0, ymax = max(airn$count),
+            fill = 'lightgreen') +
+  geom_point(size=0.1) +
+  scale_y_continuous(expand=c(0,0)) +
+  scale_x_continuous(expand=c(0,0)) +
+  theme_classic() +
+  xlab('position along chr17 (mb)') +
+  ylab('Airn lncRNA raw count')
+```
+
+# Model
+
+The model for deconvolution is
+
+$$Y \sim \text{Poisson}(D\lambda)$$
+$$\text{log}(\lambda) = B\alpha$$
+
+where $D$ represents the DNA-DNA contact matrix and $\lambda$ the true,
+underlying signal. $B$ are Gaussian basis functions and $\alpha$ are the
+coefficients to be estimated.
+
+# Preprocessing: DNA-DNA matrix
+
+Before we deconvolve, it is important to inspect the DNA-DNA contact matrix and
+preprocess it.
+
+Here, we use an example DNA matrix, taken from the
+\textit{Kcnq1ot1} imprinted region (a 1mb region around the \textit{Kcnq1ot1}
+locus) at 10kb bin resolution.
+
+```{r, fig.height=4, fig.width=5}
+dd <- readRDS(system.file("extdata", "rdsprite_kcnq1ot1_domain_DD.rds", package="dcon"))
+dd <- as.matrix(dd)
+plot_mat(dd, main = expression(paste('Raw DNA-DNA contacts at the ', italic('Kcnq1ot1'), ' locus (1mb)')))
+```
+
+
+## Normalization and smoothing
+
+There are a few important tuning parameters to normalize and smooth the 
+DNA-DNA contact matrix with `normalize_hic`.
+
+1. `threshold` -  for setting a threshold for the total number of
+contacts necessary per column to be considered for deconvolution; otherwise it
+can be quite noisy if there are gaps. For example,
+note that the center cross where there is no signal is because of the repetitive
+LINE element located inside of the Kcnq1ot1 locus, which is difficult to map
+reads to. The default threshold is set to be the bottom 0.5% quantile of the
+`colSums` of the matrix, but this can also be manually adjusted with `threshold=`.
+2. `smooth` - `TRUE` or `FALSE`, this uses a Gaussian blur to smooth the matrix.
+This takes care of instances like above where such mapping discrepancies can 
+result in 'holes' in the matrix.
+3. `sigma` - the SD of the Gaussian blur which controls the amount of smoothing 
+to apply. Default is `sigma=1`.
+
+Finally, after thresholding and smoothing, the matrix is column-normalized. 
+
+We illustrate the importance of these steps below:
+
+With no thresholding, we see that there are indeed some spurious reads in those
+'empty' gaps, and if we just column-normalize, we end up getting a messy
+signal:
+
+```{r, fig.height=4, fig.width=5}
+ddnorm <- normalize_hic(dd, threshold=0)
+plot_mat(ddnorm, main = 'Column-normalized, with no thresholding or smoothing')
+```
+
+
+The default amount of thresholding clears out the signal in the lowest 0.5%
+of bins and sets all the signal to be on the diagonal. Smoothing helps essentially 
+impute nearby values that are lost. Note that we choose not to make any
+assumptions about how the 'empty' region interacts with other regions; 
+effectively, it only spreads locally to nearby bins.
+
+```{r, fig.height=4, fig.width=5}
+ddnorm <- normalize_hic(dd, smooth = T)
+plot_mat(ddnorm, main = 'Column-normalized, with thresholding and smoothing')
+```
+
+## Setting gamma, the amount of deconvolution
+
+In practice, even after thresholding and smoothing, the DNA-DNA contact matrix
+can still be quite noisy. The `gamma` parameter is important to set because it
+controls a penalty on the off-diagonal of the DNA-DNA contact matrix, 
+essentially controlling how much of the original signal we want to preserve
+vs. deconvolve. We have $$D=(1-\gamma)I+\gamma O,$$, where $O$ is the smoothed,
+column-normalized matrix we created above. We will explore the effects of 
+different values of `gamma` below.
+
+
+# Simulated data
+
+## Gamma and degrees of freedom 
+
+We now generate a random true and observed signal assuming different `gamma` values,
+and assuming we use different `gamma` values to deconvolve.
+
+In general, using a lower degrees of freedom, set using `df`, results in fewer
+spurious peaks while still capturing the main true signal.
+
+
+```{r}
+par(mfrow=c(2,2))
+for (g in c(0.25, 0.5, 0.75, 0.9)) {
+  ddnorm <- normalize_hic(dd, gamma = g, smooth = T)
+  sim <- dcon:::simulate_y(len = 100, df = 10, D = ddnorm, npeaks=1)
+  fit0.25 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.25, smooth = T), df = 10)
+  fit0.5 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.5, smooth = T), df = 10)
+  fit0.75 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.75, smooth = T), df = 10)
+  fit0.9 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.9, smooth = T), df = 10,
+                      hessian = T)
+  plot(1:100, sim$y, ylim=c(0,200), main = paste0('gamma=',g))
+  lines(1:100, exp(sim$B%*%sim$a), col='red')
+  lines(1:100, exp(fit0.25$est), col='#8cb0fb')
+  lines(1:100, exp(fit0.5$est), col='#748cd0')
+  lines(1:100, exp(fit0.75$est), col='#5b6aa6')
+  lines(1:100, exp(fit0.9$est), col='#424b7e')
+}
+```
+
+```{r}
+for (g in c(0.25, 0.5, 0.75, 0.9)) {
+  ddnorm <- normalize_hic(dd, gamma = g, smooth = T)
+  sim <- dcon:::simulate_y(len = 100, df = 10, D = ddnorm, npeaks=1)
+  fit0.25 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.25, smooth = T), df = 5)
+  fit0.5 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.5, smooth = T), df = 5)
+  fit0.75 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.75, smooth = T), df = 5)
+  fit0.9 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.9, smooth = T), df = 5,
+                      hessian = T)
+  plot(1:100, sim$y, ylim=c(0,200), main = paste0('gamma=',g))
+  lines(1:100, exp(sim$B%*%sim$a), col='red')
+  lines(1:100, exp(fit0.25$est), col='#8cb0fb')
+  lines(1:100, exp(fit0.5$est), col='#748cd0')
+  lines(1:100, exp(fit0.75$est), col='#5b6aa6')
+  lines(1:100, exp(fit0.9$est), col='#424b7e')
+}
+```
+
+
+
+
+
+
+```{r}
+sessionInfo()
+```
+
+
+
+

@@ -24,14 +24,20 @@
 #' 
 #' @export
 
-normalize_hic <- function(M, gamma=1, threshold = 5, smooth = F, sigma = 1) {
+normalize_hic <- function(M, gamma=1, threshold = NULL, smooth = F, sigma = 1) {
   # threshold exists so that low count columns don't have large influence
   M <- as.matrix(M)
+  if (any(is.na(M))) {
+    stop('there are NA values in your matrix!')
+  }
+  if (is.null(threshold)) {
+    threshold <- quantile(colSums(M), 0.005)
+  }
   thresh_idx <- which(colSums(M)<=threshold)
   if (length(thresh_idx)>0) {
     for (id in thresh_idx) {
       M[,id] <- 0 # 0 out the column
-      M[id,id] <- 1 # make the diagonal = 1
+      M[id,id] <- mean(diag(M)) # set to the mean of the diagonal
     }
   }
   if (smooth) {
