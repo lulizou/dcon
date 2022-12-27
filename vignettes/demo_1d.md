@@ -38,9 +38,9 @@ details, see everything below the quick start section.
 Here, we use a small sample of the RD-SPRITE data
 ([GSE151515](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE151515)).
 
-We focus on the lncRNA which is a part of the imprinted cluster on
-chromosome 17 (mm10) and is thought to orchestrate silencing of the gene
-.
+We focus on the lncRNA *Airn* which is a part of the *Igf2r* imprinted
+cluster on chromosome 17 (mm10) and is thought to orchestrate silencing
+of the gene *Slc22a3*.
 
 ``` r
 airn <- fread('/rafalab/lzou/rdsprite/count_windows/Airn_RNA_count_windows_10000_clusters_2-1000_chr17_129S1_SvImJ.csv') |>
@@ -84,8 +84,9 @@ coefficients to be estimated.
 Before we deconvolve, it is important to inspect the DNA-DNA contact
 matrix and preprocess it.
 
-Here, we use an example DNA matrix, taken from the imprinted region (a
-1mb region around the locus) at 10kb bin resolution.
+Here, we use an example DNA matrix, taken from the *Kcnq1ot1* imprinted
+region (a 1mb region around the *Kcnq1ot1* locus) at 10kb bin
+resolution.
 
 ``` r
 dd <- readRDS(system.file("extdata", "rdsprite_kcnq1ot1_domain_DD.rds", package="dcon"))
@@ -165,6 +166,8 @@ deconvolve.
 In general, using a lower degrees of freedom, set using `df`, results in
 fewer spurious peaks while still capturing the main true signal.
 
+### Using true df
+
 ``` r
 par(mfrow=c(2,2))
 for (g in c(0.25, 0.5, 0.75, 0.9)) {
@@ -186,7 +189,10 @@ for (g in c(0.25, 0.5, 0.75, 0.9)) {
 
 ![](demo_1d_files/figure-gfm/unnamed-chunk-6-1.png)
 
+### Using lower df
+
 ``` r
+par(mfrow=c(2,2))
 for (g in c(0.25, 0.5, 0.75, 0.9)) {
   ddnorm <- normalize_hic(dd, gamma = g, smooth = T)
   sim <- dcon:::simulate_y(len = 100, df = 10, D = ddnorm, npeaks=1)
@@ -205,12 +211,6 @@ for (g in c(0.25, 0.5, 0.75, 0.9)) {
 ```
 
 ![](demo_1d_files/figure-gfm/unnamed-chunk-7-1.png)
-
-![](demo_1d_files/figure-gfm/unnamed-chunk-7-2.png)
-
-![](demo_1d_files/figure-gfm/unnamed-chunk-7-3.png)
-
-![](demo_1d_files/figure-gfm/unnamed-chunk-7-4.png)
 
 ``` r
 sessionInfo()

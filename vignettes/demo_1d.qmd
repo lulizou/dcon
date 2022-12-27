@@ -24,9 +24,9 @@ Here, we use a small sample of the
 RD-SPRITE data 
 ([GSE151515](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE151515)).
 
-We focus on the lncRNA \textit{Airn} which is a part of the \textit{Igf2r}
+We focus on the lncRNA *Airn* which is a part of the *Igf2r*
 imprinted cluster on chromosome 17 (mm10) and is thought to orchestrate 
-silencing of the gene  \textit{Slc22a3}.
+silencing of the gene  *Slc22a3*.
 
 
 ```{r load-data}
@@ -69,7 +69,7 @@ Before we deconvolve, it is important to inspect the DNA-DNA contact matrix and
 preprocess it.
 
 Here, we use an example DNA matrix, taken from the
-\textit{Kcnq1ot1} imprinted region (a 1mb region around the \textit{Kcnq1ot1}
+*Kcnq1ot1* imprinted region (a 1mb region around the *Kcnq1ot1*
 locus) at 10kb bin resolution.
 
 ```{r, fig.height=4, fig.width=5}
@@ -143,6 +143,7 @@ and assuming we use different `gamma` values to deconvolve.
 In general, using a lower degrees of freedom, set using `df`, results in fewer
 spurious peaks while still capturing the main true signal.
 
+### Using true df
 
 ```{r}
 par(mfrow=c(2,2))
@@ -163,7 +164,11 @@ for (g in c(0.25, 0.5, 0.75, 0.9)) {
 }
 ```
 
+
+### Using lower df
+
 ```{r}
+par(mfrow=c(2,2))
 for (g in c(0.25, 0.5, 0.75, 0.9)) {
   ddnorm <- normalize_hic(dd, gamma = g, smooth = T)
   sim <- dcon:::simulate_y(len = 100, df = 10, D = ddnorm, npeaks=1)
