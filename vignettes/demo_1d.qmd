@@ -1,6 +1,8 @@
 ---
 title: "Deconvolution in 1D"
-format: gfm
+format: 
+  gfm:
+    toc: true
 editor: source
 ---
 
@@ -66,7 +68,8 @@ coefficients to be estimated.
 # Preprocessing: DNA-DNA matrix
 
 Before we deconvolve, it is important to inspect the DNA-DNA contact matrix and
-preprocess it.
+preprocess it. The default parameters should work in many cases, but it is
+also good to manually inspect what is happening.
 
 Here, we use an example DNA matrix, taken from the
 *Kcnq1ot1* imprinted region (a 1mb region around the *Kcnq1ot1*
@@ -128,7 +131,7 @@ In practice, even after thresholding and smoothing, the DNA-DNA contact matrix
 can still be quite noisy. The `gamma` parameter is important to set because it
 controls a penalty on the off-diagonal of the DNA-DNA contact matrix, 
 essentially controlling how much of the original signal we want to preserve
-vs. deconvolve. We have $$D=(1-\gamma)I+\gamma O,$$, where $O$ is the smoothed,
+vs. deconvolve. We have $$D=(1-\gamma)I+\gamma O,$$ where $O$ is the smoothed,
 column-normalized matrix we created above. We will explore the effects of 
 different values of `gamma` below.
 
@@ -180,28 +183,38 @@ for (g in c(0.25, 0.5, 0.75, 0.9)) {
 ```
 
 
-### Using lower df
+
+### Multiple peaks
 
 ```{r}
 par(mfrow=c(2,2))
-for (g in c(0.25, 0.5, 0.75, 0.9)) {
+for (g in c(0.25, 0.5, 0.75, 0.95)) {
   ddnorm <- normalize_hic(dd, gamma = g, smooth = T)
-  sim <- dcon:::simulate_y(len = 100, df = 10, D = ddnorm, npeaks=1)
-  fit0.25 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.25, smooth = T), df = 5)
-  fit0.5 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.5, smooth = T), df = 5)
-  fit0.75 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.75, smooth = T), df = 5)
-  fit0.9 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.9, smooth = T), df = 5,
+  sim <- dcon:::simulate_y(len = 100, df = 10, D = ddnorm, npeaks=2)
+  fit0.25 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.25, smooth = T), df = 10)
+  fit0.5 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.5, smooth = T), df = 10)
+  fit0.75 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.75, smooth = T), df = 10)
+  fit0.95 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.95, smooth = T), df = 10,
                       hessian = T)
   plot(1:100, sim$y, ylim=c(0,200), main = paste0('gamma=',g))
   lines(1:100, exp(sim$B%*%sim$a), col='red')
   lines(1:100, exp(fit0.25$est), col='#8cb0fb')
   lines(1:100, exp(fit0.5$est), col='#748cd0')
   lines(1:100, exp(fit0.75$est), col='#5b6aa6')
-  lines(1:100, exp(fit0.9$est), col='#424b7e')
+  lines(1:100, exp(fit0.95$est), col='#424b7e')
 }
 ```
 
+## Plots for show
 
+```{r}
+data.frame(
+  pos = 1:100,
+  observed = sim$y,
+  true = exp(sim$B%*%sim$a),
+  fit = exp(fit0.95$est)
+)
+```
 
 
 
