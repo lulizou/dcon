@@ -135,8 +135,8 @@ The default amount of thresholding clears out the signal in the lowest
 0.5% of bins and sets all the signal to be on the diagonal. Smoothing
 helps essentially impute nearby values that are lost. Note that we
 choose not to make any assumptions about how the ‘empty’ region
-interacts with other regions; effectively, it only spreads locally to
-nearby bins.
+interacts with distant regions; the blur effectively smooths over
+contacts with nearby regions.
 
 ``` r
 ddnorm <- normalize_hic(dd, smooth = T)
@@ -163,8 +163,24 @@ We now generate a random true and observed signal assuming different
 `gamma` values, and assuming we use different `gamma` values to
 deconvolve.
 
-In general, using a lower degrees of freedom, set using `df`, results in
-fewer spurious peaks while still capturing the main true signal.
+Interpretation of the true `gamma`:
+
+1.  When the true `gamma` is low, then effectively there is no
+    convolution happening. The signal has less noise, and the observed
+    data more accurately reflects the true signal.
+2.  When the true `gamma` is high, then the signal is heavily convolved.
+    The observed data appears much more spread out than the true signal.
+
+Interpretation of the `gamma` used to fit:
+
+1.  In general, higher `gamma` results in effectively more of the signal
+    being placed at the center peak.
+2.  In general, lower `gamma` deconvolves less and the fitted signal is
+    close to the observed data.
+
+And in general, fitting with a lower degrees of freedom, set using `df`,
+results in fewer spurious peaks while still capturing the main true
+signal.
 
 ### Using true df
 
