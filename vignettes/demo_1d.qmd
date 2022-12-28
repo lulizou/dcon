@@ -13,6 +13,7 @@ library(data.table)
 library(dplyr)
 library(tidyr)
 library(ggplot2)
+library(gridExtra)
 library(dcon)
 set.seed(13579)
 ```
@@ -171,8 +172,7 @@ for (g in c(0.25, 0.5, 0.75, 0.9)) {
   fit0.25 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.25, smooth = T), df = 10)
   fit0.5 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.5, smooth = T), df = 10)
   fit0.75 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.75, smooth = T), df = 10)
-  fit0.9 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.9, smooth = T), df = 10,
-                      hessian = T)
+  fit0.9 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.9, smooth = T), df = 10)
   plot(1:100, sim$y, ylim=c(0,200), main = paste0('gamma=',g))
   lines(1:100, exp(sim$B%*%sim$a), col='red')
   lines(1:100, exp(fit0.25$est), col='#8cb0fb')
@@ -194,8 +194,7 @@ for (g in c(0.25, 0.5, 0.75, 0.95)) {
   fit0.25 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.25, smooth = T), df = 10)
   fit0.5 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.5, smooth = T), df = 10)
   fit0.75 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.75, smooth = T), df = 10)
-  fit0.95 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.95, smooth = T), df = 10,
-                      hessian = T)
+  fit0.95 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.95, smooth = T), df = 10)
   plot(1:100, sim$y, ylim=c(0,200), main = paste0('gamma=',g))
   lines(1:100, exp(sim$B%*%sim$a), col='red')
   lines(1:100, exp(fit0.25$est), col='#8cb0fb')
@@ -208,12 +207,67 @@ for (g in c(0.25, 0.5, 0.75, 0.95)) {
 ## Plots for show
 
 ```{r}
-data.frame(
+dd <- data.frame(
   pos = 1:100,
   observed = sim$y,
   true = exp(sim$B%*%sim$a),
   fit = exp(fit0.95$est)
-)
+) |>
+  pivot_longer(cols = c(observed:fit), names_to = 'type', values_to = 'signal') |>
+  mutate(color = case_when(
+    type == 'true' ~ 'red',
+    type == 'observed' ~ 'black',
+    type == 'fit' ~ 'royalblue1'
+  )) |>
+  mutate(type = factor(type, levels = c('true','observed','fit'), labels = c('True signal', 'Observed data', 'Deconvolved signal')))
+
+p1 <- dd |>
+  filter(type == 'True signal') |>
+  ggplot(aes(x = pos, y = signal, color = color)) +
+  geom_point(size=0.5) +
+  geom_line() +
+  scale_color_identity() +
+  theme_minimal() +
+  theme(axis.text.x = element_blank(),
+        panel.border = element_rect(color = "gray 50", fill = NA),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.ticks.y = element_line(color='gray 50')) +
+  xlab('') +
+  ylab('Signal')
+p2 <- dd |>
+  filter(type == 'Observed data') |>
+  ggplot(aes(x = pos, y = signal, color = color)) +
+  geom_point(size=0.5) +
+  scale_color_identity() +
+  theme_minimal() +
+  theme(axis.text.x = element_blank(),
+        panel.border = element_rect(color = "gray 50", fill = NA),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.ticks.y = element_line(color='gray 50')) +
+  xlab('') +
+  ylab('Count')
+p3 <- dd |>
+  filter(grepl('signal',type)) |>
+  ggplot(aes(x = pos, y = signal, color = color)) +
+  geom_point(size=0.5) +
+  geom_line() +
+  geom_point(data = dd |> filter(type == 'Observed data'), size=0.5) +
+  theme_minimal() +
+  scale_color_identity(guide = 'legend',
+                       breaks = 'royalblue1',
+                       labels = 'Deconvolved') +
+  theme(axis.text.x = element_blank(),
+        panel.border = element_rect(color = "gray 50", fill = NA),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.ticks.y = element_line(color='gray 50'),
+        legend.position = c(10,10)) +
+  xlab('') +
+  ylab('')
+g <- grid.arrange(p1, p2, p3, ncol = 1)
+ggsave('decon-1d-fig.pdf', g, height=3, width=4)
 ```
 
 

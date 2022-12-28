@@ -42,6 +42,17 @@ library(dplyr)
 ``` r
 library(tidyr)
 library(ggplot2)
+library(gridExtra)
+```
+
+
+    Attaching package: 'gridExtra'
+
+    The following object is masked from 'package:dplyr':
+
+        combine
+
+``` r
 library(dcon)
 set.seed(13579)
 ```
@@ -209,8 +220,7 @@ for (g in c(0.25, 0.5, 0.75, 0.9)) {
   fit0.25 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.25, smooth = T), df = 10)
   fit0.5 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.5, smooth = T), df = 10)
   fit0.75 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.75, smooth = T), df = 10)
-  fit0.9 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.9, smooth = T), df = 10,
-                      hessian = T)
+  fit0.9 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.9, smooth = T), df = 10)
   plot(1:100, sim$y, ylim=c(0,200), main = paste0('gamma=',g))
   lines(1:100, exp(sim$B%*%sim$a), col='red')
   lines(1:100, exp(fit0.25$est), col='#8cb0fb')
@@ -232,8 +242,7 @@ for (g in c(0.25, 0.5, 0.75, 0.95)) {
   fit0.25 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.25, smooth = T), df = 10)
   fit0.5 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.5, smooth = T), df = 10)
   fit0.75 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.75, smooth = T), df = 10)
-  fit0.95 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.95, smooth = T), df = 10,
-                      hessian = T)
+  fit0.95 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.95, smooth = T), df = 10)
   plot(1:100, sim$y, ylim=c(0,200), main = paste0('gamma=',g))
   lines(1:100, exp(sim$B%*%sim$a), col='red')
   lines(1:100, exp(fit0.25$est), col='#8cb0fb')
@@ -248,115 +257,73 @@ for (g in c(0.25, 0.5, 0.75, 0.95)) {
 ## Plots for show
 
 ``` r
-data.frame(
+dd <- data.frame(
   pos = 1:100,
   observed = sim$y,
   true = exp(sim$B%*%sim$a),
   fit = exp(fit0.95$est)
-)
+) |>
+  pivot_longer(cols = c(observed:fit), names_to = 'type', values_to = 'signal') |>
+  mutate(color = case_when(
+    type == 'true' ~ 'red',
+    type == 'observed' ~ 'black',
+    type == 'fit' ~ 'royalblue1'
+  )) |>
+  mutate(type = factor(type, levels = c('true','observed','fit'), labels = c('True signal', 'Observed data', 'Deconvolved signal')))
+
+p1 <- dd |>
+  filter(type == 'True signal') |>
+  ggplot(aes(x = pos, y = signal, color = color)) +
+  geom_point(size=0.5) +
+  geom_line() +
+  scale_color_identity() +
+  theme_minimal() +
+  theme(axis.text.x = element_blank(),
+        panel.border = element_rect(color = "gray 50", fill = NA),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.ticks.y = element_line(color='gray 50')) +
+  xlab('') +
+  ylab('Signal')
+p2 <- dd |>
+  filter(type == 'Observed data') |>
+  ggplot(aes(x = pos, y = signal, color = color)) +
+  geom_point(size=0.5) +
+  scale_color_identity() +
+  theme_minimal() +
+  theme(axis.text.x = element_blank(),
+        panel.border = element_rect(color = "gray 50", fill = NA),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.ticks.y = element_line(color='gray 50')) +
+  xlab('') +
+  ylab('Count')
+p3 <- dd |>
+  filter(grepl('signal',type)) |>
+  ggplot(aes(x = pos, y = signal, color = color)) +
+  geom_point(size=0.5) +
+  geom_line() +
+  geom_point(data = dd |> filter(type == 'Observed data'), size=0.5) +
+  theme_minimal() +
+  scale_color_identity(guide = 'legend',
+                       breaks = 'royalblue1',
+                       labels = 'Deconvolved') +
+  theme(axis.text.x = element_blank(),
+        panel.border = element_rect(color = "gray 50", fill = NA),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.ticks.y = element_line(color='gray 50'),
+        legend.position = c(10,10)) +
+  xlab('') +
+  ylab('')
+g <- grid.arrange(p1, p2, p3, ncol = 1)
 ```
 
-        pos observed       true          fit
-    1     1        9   1.057117 7.052660e-01
-    2     2       13   1.078882 1.088398e+00
-    3     3        7   1.108073 1.586907e+00
-    4     4       15   1.147007 2.188727e+00
-    5     5       21   1.198726 2.865803e+00
-    6     6       18   1.267270 3.581626e+00
-    7     7       31   1.358074 4.302264e+00
-    8     8       28   1.478552 5.006553e+00
-    9     9       23   1.638979 5.692223e+00
-    10   10       18   1.853797 6.377354e+00
-    11   11       27   2.143573 7.098750e+00
-    12   12       23   2.537939 7.909735e+00
-    13   13       21   3.079937 8.879391e+00
-    14   14       28   3.832410 1.009436e+01
-    15   15       35   4.887124 1.166339e+01
-    16   16       37   6.377314 1.372407e+01
-    17   17       40   8.493769 1.645023e+01
-    18   18       37  11.503101 2.005732e+01
-    19   19       38  15.763540 2.480072e+01
-    20   20       43  21.727973 3.095922e+01
-    21   21       44  29.916184 3.879322e+01
-    22   22       42  40.831618 4.846788e+01
-    23   23       28  54.800263 5.993895e+01
-    24   24       44  71.732045 7.281851e+01
-    25   25       52  90.856302 8.626614e+01
-    26   26       44 110.550105 9.897671e+01
-    27   27       48 128.416544 1.093327e+02
-    28   28       48 141.717450 1.157355e+02
-    29   29       44 148.098790 1.170355e+02
-    30   30       54 146.343038 1.128954e+02
-    31   31       53 136.794693 1.039185e+02
-    32   32       43 121.237379 9.147233e+01
-    33   33       57 102.287848 7.728838e+01
-    34   34       44  82.612568 6.301630e+01
-    35   35       53  64.306760 4.990156e+01
-    36   36       50  48.618478 3.866225e+01
-    37   37       43  35.996385 2.953842e+01
-    38   38       42  26.319715 2.243359e+01
-    39   39       37  19.162175 1.706963e+01
-    40   40       38  13.999804 1.310841e+01
-    41   41       31  10.336614 1.022668e+01
-    42   42       43   7.760715 8.151270e+00
-    43   43       35   5.956122 6.668132e+00
-    44   44       43   4.692571 5.617788e+00
-    45   45       39   3.807893 4.885620e+00
-    46   46       28   3.190521 4.391622e+00
-    47   47       18   2.765073 4.081639e+00
-    48   48       25   2.481617 3.920671e+00
-    49   49       38   2.308180 3.888147e+00
-    50   50       35   2.225851 3.974856e+00
-    51   51       44   2.225851 4.181220e+00
-    52   52       40   2.308180 4.516679e+00
-    53   53       45   2.481617 5.000025e+00
-    54   54       42   2.765073 5.660640e+00
-    55   55       37   3.190521 6.540640e+00
-    56   56       30   3.807893 7.697934e+00
-    57   57       45   4.692571 9.210212e+00
-    58   58       36   5.956122 1.117970e+01
-    59   59       50   7.760715 1.373822e+01
-    60   60       40  10.336614 1.705167e+01
-    61   61       33  13.999804 2.132199e+01
-    62   62       38  19.162175 2.678380e+01
-    63   63       45  26.319715 3.369147e+01
-    64   64       48  35.996385 4.229132e+01
-    65   65       42  48.618478 5.277403e+01
-    66   66       41  64.306760 6.520472e+01
-    67   67       37  82.612568 7.943431e+01
-    68   68       41 102.287848 9.500596e+01
-    69   69       56 121.237379 1.110824e+02
-    70   70       55 136.794693 1.264293e+02
-    71   71       49 146.343038 1.394915e+02
-    72   72       55 148.098790 1.485814e+02
-    73   73       52 141.717450 1.521715e+02
-    74   74       54 128.416544 1.492378e+02
-    75   75       42 110.550105 1.395665e+02
-    76   76       47  90.856302 1.239214e+02
-    77   77       49  71.732045 1.039884e+02
-    78   78       33  54.800263 8.207580e+01
-    79   79       42  40.831618 6.063103e+01
-    80   80       37  29.916184 4.171516e+01
-    81   81       40  21.727973 2.660771e+01
-    82   82       34  15.763540 1.567161e+01
-    83   83       23  11.503101 8.498996e+00
-    84   84       32   8.493769 4.238600e+00
-    85   85       34   6.377314 1.945632e+00
-    86   86       30   4.887124 8.249328e-01
-    87   87       21   3.832410 3.252208e-01
-    88   88       17   3.079937 1.204230e-01
-    89   89       11   2.537939 4.245557e-02
-    90   90       18   2.143573 1.449799e-02
-    91   91       14   1.853797 4.894253e-03
-    92   92       16   1.638979 1.671487e-03
-    93   93       14   1.478552 5.921520e-04
-    94   94       26   1.358074 2.233455e-04
-    95   95       23   1.267270 9.204027e-05
-    96   96       31   1.198726 4.247171e-05
-    97   97       32   1.147007 2.243399e-05
-    98   98       22   1.108073 1.381559e-05
-    99   99       26   1.078882 1.005642e-05
-    100 100       22   1.057117 8.724422e-06
+![](demo_1d_files/figure-gfm/unnamed-chunk-8-1.png)
+
+``` r
+ggsave('decon-1d-fig.pdf', g, height=3, width=4)
+```
 
 ``` r
 sessionInfo()
@@ -381,8 +348,8 @@ sessionInfo()
     [1] stats     graphics  grDevices utils     datasets  methods   base     
 
     other attached packages:
-    [1] dcon_0.0.0.9000   ggplot2_3.4.0     tidyr_1.2.1       dplyr_1.0.10     
-    [5] data.table_1.14.6
+    [1] dcon_0.0.0.9000   gridExtra_2.3     ggplot2_3.4.0     tidyr_1.2.1      
+    [5] dplyr_1.0.10      data.table_1.14.6
 
     loaded via a namespace (and not attached):
      [1] Rcpp_1.0.9             lattice_0.20-45        deldir_1.0-6          
@@ -392,20 +359,21 @@ sessionInfo()
     [13] tensor_1.5             pillar_1.8.1           zlibbioc_1.44.0       
     [16] rlang_1.0.6            rstudioapi_0.14        S4Vectors_0.36.1      
     [19] rpart_4.1.19           Matrix_1.5-3           goftest_1.2-3         
-    [22] rmarkdown_2.19         labeling_0.4.2         splines_4.2.2         
-    [25] stringr_1.5.0          RCurl_1.98-1.9         polyclip_1.10-4       
-    [28] munsell_0.5.0          spatstat.data_3.0-0    compiler_4.2.2        
-    [31] xfun_0.35              pkgconfig_2.0.3        BiocGenerics_0.44.0   
-    [34] mgcv_1.8-41            htmltools_0.5.4        tidyselect_1.2.0      
-    [37] spatstat.random_3.0-1  tibble_3.1.8           GenomeInfoDbData_1.2.9
-    [40] IRanges_2.32.0         fansi_1.0.3            withr_2.5.0           
-    [43] bitops_1.0-7           grid_4.2.2             nlme_3.1-161          
-    [46] jsonlite_1.8.4         gtable_0.3.1           lifecycle_1.0.3       
-    [49] DBI_1.1.3              magrittr_2.0.3         scales_1.2.1          
-    [52] cli_3.4.1              stringi_1.7.8          farver_2.1.1          
-    [55] XVector_0.38.0         reshape2_1.4.4         generics_0.1.3        
-    [58] vctrs_0.5.1            spatstat.utils_3.0-1   RColorBrewer_1.1-3    
-    [61] tools_4.2.2            glue_1.6.2             purrr_0.3.5           
-    [64] abind_1.4-5            fastmap_1.1.0          yaml_2.3.6            
-    [67] spatstat.sparse_3.0-0  colorspace_2.0-3       GenomicRanges_1.50.1  
-    [70] spatstat.geom_3.0-3    knitr_1.41            
+    [22] rmarkdown_2.19         textshaping_0.3.6      labeling_0.4.2        
+    [25] splines_4.2.2          stringr_1.5.0          RCurl_1.98-1.9        
+    [28] polyclip_1.10-4        munsell_0.5.0          spatstat.data_3.0-0   
+    [31] compiler_4.2.2         xfun_0.35              systemfonts_1.0.4     
+    [34] pkgconfig_2.0.3        BiocGenerics_0.44.0    mgcv_1.8-41           
+    [37] htmltools_0.5.4        tidyselect_1.2.0       spatstat.random_3.0-1 
+    [40] tibble_3.1.8           GenomeInfoDbData_1.2.9 IRanges_2.32.0        
+    [43] fansi_1.0.3            withr_2.5.0            bitops_1.0-7          
+    [46] grid_4.2.2             nlme_3.1-161           jsonlite_1.8.4        
+    [49] gtable_0.3.1           lifecycle_1.0.3        DBI_1.1.3             
+    [52] magrittr_2.0.3         scales_1.2.1           cli_3.4.1             
+    [55] stringi_1.7.8          farver_2.1.1           XVector_0.38.0        
+    [58] reshape2_1.4.4         ragg_1.2.4             ellipsis_0.3.2        
+    [61] generics_0.1.3         vctrs_0.5.1            spatstat.utils_3.0-1  
+    [64] RColorBrewer_1.1-3     tools_4.2.2            glue_1.6.2            
+    [67] purrr_0.3.5            abind_1.4-5            fastmap_1.1.0         
+    [70] yaml_2.3.6             spatstat.sparse_3.0-0  colorspace_2.0-3      
+    [73] GenomicRanges_1.50.1   spatstat.geom_3.0-3    knitr_1.41            
