@@ -1,0 +1,327 @@
+---
+title: "Deconvolution simulations"
+format: 
+  gfm:
+    toc: true
+editor: source
+execute:
+  cache: true
+---
+
+This vignette shows all the simulations.
+
+```{r}
+library(data.table)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(gridExtra)
+library(pracma)
+library(dcon)
+set.seed(13579)
+B <- 100 # number of replicates to use for each simulation
+```
+
+# DNA-DNA matrix
+
+We used two different examples of DNA-DNA matrices. The first is 1mb around the *Kcnq1ot1* domain on chr7. The second is a random 30mb chunk from chr7.
+
+```{r}
+# use real Kcnq1ot1 DNA-DNA matrix - has lots of contacts
+dd1 <- readRDS(system.file("extdata", "rdsprite_kcnq1ot1_domain_DD.rds", package="dcon"))
+plot_mat(dd1)
+```
+
+```{r}
+# use real chr7 30mb-60mb kinda big so takes a sec to plot
+dd30 <- readRDS(system.file("extdata", "chr7_30-60mb_DD.rds", package="dcon"))
+plot_mat(dd30)
+```
+
+# Coefficient generation
+
+We experimented with a few different coefficient distributions and plot some examples of their random signals here:
+
+```{r}
+par(mfrow=c(4,4))
+ddnorm <- normalize_hic(dd1, gamma=0.9)
+for (i in 2:5) {
+  for (j in 1:4) {
+    sim <- dcon:::simulate_y(100, df=10, D=ddnorm, normalized=TRUE,
+                             alpha_mean = 0, alpha_sd = i)
+    plot(1:100, sim$y, ylab = paste('y, sd =',i))
+    lines(1:100, exp(sim$B%*%sim$a), col='red')
+  }
+}
+```
+
+```{r}
+par(mfrow=c(4,4))
+ddnorm <- normalize_hic(dd30, gamma=0.9)
+for (i in 2:5) {
+  for (j in 1:4) {
+    sim <- dcon:::simulate_y(3000, df=100, D=ddnorm, normalized=TRUE,
+                             alpha_mean = 0, alpha_sd = i)
+    plot(1:3000, sim$y, ylab = paste('y, sd =',i))
+    lines(1:3000, exp(sim$B%*%sim$a), col='red')
+  }
+}
+```
+
+In terms of a realistic count scale, we decided to omit instances where the maximum observed $y$ value was less than $20$, and similarly, omitted instances where the maximum observed $y$ value was greater than $500$.
+
+# Signal localization
+
+Simulate a signal and find peaks on it. Coefficients are $\mathcal{N}(0,5)$. Find peaks on the fitted estimate and see how much overlap there is. Count it as correct if the fitted peak is present within the tolerance range of the start and end of the true peak signal.
+
+```{r}
+sim_localization <- function(B, len, 
+                             df_true, df_fit,
+                             ddnorm_true, ddnorm_fit,
+                             label = '', tolerance = 2) {
+  nreps <- 0
+  results <- matrix(nrow = B, ncol = 8)
+  colnames(results) <- paste0(c('fitTP_', 'fitFP_', 'fitTN_', 'fitFN_',
+                                'rawTP_', 'rawFP_', 'rawTN_', 'rawFN_'), label)
+  while (nreps < B) {
+    sim <- dcon:::simulate_y(len, df=df_true, D=ddnorm_true, normalized=TRUE,
+                             alpha_mean = 0, alpha_sd = 5)
+    if (max(sim$y) < 20 | max(sim$y) > 500) {
+      next
+    }
+    fit <- fit_decon(sim$y, ddnorm_fit, df=df_fit)
+    y <- as.numeric(exp(sim$B%*%sim$a))
+    y_hat <- exp(fit$est)
+    true_peaks <- findpeaks(y, minpeakheight = quantile(y, 0.9))
+    raw_peaks <- findpeaks(sim$y, minpeakheight = quantile(sim$y, 0.9))
+    fit_peaks <- findpeaks(y_hat, minpeakheight = quantile(y_hat, 0.9))
+    if (is.null(true_peaks)) {
+      next
+    }
+    nreps <- nreps + 1
+    # for fitted peak metrics
+    if (is.null(fit_peaks)) {
+      TP <- 0
+      FP <- 0
+      FN <- nrow(true_peaks)
+      TN <- len-FN
+    } else {
+      true_ranges <- NULL
+      fit_ranges <- NULL
+      for (i in 1:nrow(true_peaks)) {
+        true_ranges <- c(true_ranges, (true_peaks[i,2]-tolerance):(true_peaks[i,2]+tolerance))
+      }
+      true_ranges <- unique(true_ranges)
+      for (i in 1:nrow(fit_peaks)) {
+        fit_ranges <- c(fit_ranges, (fit_peaks[i,2]-tolerance):(fit_peaks[i,2]+tolerance))
+      }
+      fit_ranges <- unique(fit_ranges)
+      TP <- sum(fit_peaks[,2] %in% true_ranges)
+      FP <- nrow(fit_peaks)-TP
+      FN <- sum(!true_peaks[,2] %in% fit_ranges)
+      TN <- sum((!c(1:len)%in%true_ranges) & (!c(1:len)%in%fit_ranges))
+    }
+    results[nreps,1:4] <- c(TP,FP,TN,FN)
+    # for raw peak metrics
+    if (is.null(raw_peaks)) {
+      TP <- 0
+      FP <- 0
+      FN <- nrow(true_peaks)
+      TN <- len-FN
+    } else {
+      true_ranges <- NULL
+      raw_ranges <- NULL
+      for (i in 1:nrow(true_peaks)) {
+        true_ranges <- c(true_ranges, (true_peaks[i,2]-tolerance):(true_peaks[i,2]+tolerance))
+      }
+      true_ranges <- unique(true_ranges)
+      for (i in 1:nrow(raw_peaks)) {
+        raw_ranges <- c(raw_ranges, (raw_peaks[i,2]-tolerance):(raw_peaks[i,2]+tolerance))
+      }
+      raw_ranges <- unique(raw_ranges)
+      TP <- sum(raw_peaks[,2] %in% true_ranges)
+      FP <- nrow(raw_peaks)-TP
+      FN <- sum(!true_peaks[,2] %in% raw_ranges)
+      TN <- sum((!c(1:len)%in%true_ranges) & (!c(1:len)%in%raw_ranges))
+    }
+    results[nreps,5:8] <- c(TP,FP,TN,FN)
+  }
+  return(results)
+}
+
+sim_metrics <- function(B, len, 
+                        df_true, df_fit,
+                        ddnorm_true, ddnorm_fit,
+                        label = '') {
+  replicate(B, {
+    sim <- sim_localization(B=10, len, df_true, df_fit, ddnorm_true, ddnorm_fit, '')
+    sim <- colSums(sim)
+    z <- c(sim[1]/(sim[1]+sim[4]), sim[1]/(sim[1]+sim[2]),
+           sim[5]/(sim[5]+sim[8]), sim[5]/(sim[5]+sim[6]))
+    names(z) <- paste0(c('Fit_Recall_', 'Fit_Precision_',
+                         'Raw_Recall_', 'Raw_Precision_'), label)
+    z
+  })
+}
+```
+
+
+```{r}
+ddnorm <- normalize_hic(dd1, gamma=0.9)
+# correctly specified
+res <- sim_metrics(B, 100, 10, 10, ddnorm, ddnorm, label = 'Correct-spec')
+allres <- res
+# fewer df 
+res <- sim_metrics(B, 100, 10, 5, ddnorm, ddnorm, 'df-low')
+allres <- rbind(allres, res)
+# more df
+res <- sim_metrics(B, 100, 10, 15, ddnorm, ddnorm, 'df-high')
+allres <- rbind(allres, res)
+# max df
+res <- sim_metrics(B, 100, 10, 100, ddnorm, ddnorm, 'df-max')
+allres <- rbind(allres, res)
+# conservative gamma
+ddnorm2 <- normalize_hic(dd1, gamma=0.75)
+res <- sim_metrics(B, 100, 10, 10, ddnorm, ddnorm2, 'g-low')
+allres <- rbind(allres, res)
+# high gamma
+ddnorm2 <- normalize_hic(dd1, gamma=0.95)
+res <- sim_metrics(B, 100, 10, 10, ddnorm, ddnorm2, 'g-high')
+allres <- rbind(allres, res)
+```
+
+# Signal strength estimation
+
+Simulate a signal and compute the RMSE and MAD.
+
+```{r}
+sim_signal_strength <- function(B, len, 
+                                df_true, df_fit,
+                                ddnorm_true, ddnorm_fit,
+                                label = '') {
+  nreps <- 0
+  results <- matrix(nrow = B, ncol = 4)
+  colnames(results) <- paste0(c('Fit_RMSE_', 'Fit_MAD_',
+                                'Raw_RMSE_', 'Raw_MAD_'), label)
+  while (nreps < B) {
+    sim <- dcon:::simulate_y(len, df=df_true, D=ddnorm_true, normalized=TRUE,
+                             alpha_mean = 0, alpha_sd = 5)
+    if (max(sim$y) < 20 | max(sim$y) > 500) {
+      next
+    }
+    nreps <- nreps + 1
+    fit <- fit_decon(sim$y, ddnorm_fit, df=df_fit)
+    y <- exp(sim$B%*%sim$a)
+    y_hat <- exp(fit$est)
+    results[nreps,] <- c(sqrt(mean((y-y_hat)**2)), median(abs(y-y_hat)),
+                         sqrt(mean((y-sim$y)**2)), median(abs(y-sim$y)))
+  }
+  return(results)
+}
+```
+
+## Kcnq1ot1-like 1mb domain
+
+```{r}
+ddnorm <- normalize_hic(dd1, gamma=0.9)
+# correctly specified
+res <- sim_signal_strength(B, 100, 10, 10, ddnorm, ddnorm, 'Correct-spec')
+allres2 <- res
+# fewer df 
+res <- sim_signal_strength(B, 100, 10, 5, ddnorm, ddnorm, 'df-low')
+allres2 <- cbind(allres2, res)
+# more df
+res <- sim_signal_strength(B, 100, 10, 15, ddnorm, ddnorm, 'df-high')
+allres2 <- cbind(allres2, res)
+# max df
+res <- sim_signal_strength(B, 100, 10, 100, ddnorm, ddnorm, 'df-max')
+allres2 <- cbind(allres2, res)
+# conservative gamma
+ddnorm2 <- normalize_hic(dd1, gamma=0.75)
+res <- sim_signal_strength(B, 100, 10, 10, ddnorm, ddnorm2, 'g-low')
+allres2 <- cbind(allres2, res)
+# high gamma
+ddnorm2 <- normalize_hic(dd1, gamma=0.95)
+res <- sim_signal_strength(B, 100, 10, 10, ddnorm, ddnorm2, 'g-high')
+allres2 <- cbind(allres2, res)
+```
+
+
+# Sensitivity, specificity, precision, MAD all in one plot
+
+```{r}
+data.frame(allres2) |>
+  pivot_longer(cols = everything()) |>
+  separate(name, into = c('fit','metric', 'sim'), sep='_') |>
+  filter(metric == 'MAD') |>
+  mutate(metric = 'Median absolute deviation') |>
+  bind_rows(
+    data.frame(t(allres)) |>
+      pivot_longer(cols = everything()) |>
+      separate(name, into = c('fit','metric', 'sim'), sep='_')
+  ) |>
+  mutate(sim = gsub('\\.','\n',sim)) |>
+  ggplot(aes(x = sim, y = value)) +
+  geom_boxplot(aes(fill = fit)) +
+  scale_fill_manual(name = '', breaks = c('Raw','Fit'), values = c('white','royalblue1'), labels = c('Observed', 'Deconvolved')) +
+  facet_wrap(metric ~ ., scales = 'free_y', nrow=1) +
+  theme_minimal() +
+  theme(panel.border = element_rect(color = "gray 50", fill = NA),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.ticks = element_line(color='gray 50'),
+        legend.position = 'bottom') +
+  xlab('Simulation Condition') +
+  ylab('')
+ggsave('simulation-metrics.pdf', height=3, width=6.5)
+```
+
+
+
+## 10mb domain
+
+```{r, eval=F}
+B <- 10
+ddnorm <- normalize_hic(dd30[2001:3000,2001:3000], gamma=0.9)
+# correctly specified
+res <- sim_signal_strength(B, 1000, 100, 100, ddnorm, ddnorm, 'Correctly-specified')
+allres <- res
+# fewer df 
+res <- sim_signal_strength(B, 1000, 100, 50, ddnorm, ddnorm, 'DF-low')
+allres <- cbind(allres, res)
+# more df
+res <- sim_signal_strength(B, 1000, 100, 150, ddnorm, ddnorm, 'DF-high')
+allres <- cbind(allres, res)
+# max df
+res <- sim_signal_strength(B, 1000, 100, 1000, ddnorm, ddnorm, 'DF-max')
+allres <- cbind(allres, res)
+# conservative gamma
+ddnorm2 <- normalize_hic(dd, gamma=0.75)
+res <- sim_signal_strength(B, 1000, 100, 100, ddnorm, ddnorm2, 'Gamma-low')
+allres <- cbind(allres, res)
+# high gamma
+ddnorm2 <- normalize_hic(dd, gamma=0.95)
+res <- sim_signal_strength(B, 1000, 100, 100, ddnorm, ddnorm2, 'Gamma-high')
+allres <- cbind(allres, res)
+
+
+data.frame(allres) |>
+  pivot_longer(cols = everything()) |>
+  separate(name, into = c('metric', 'sim'), sep='_') |>
+  mutate(sim = gsub('\\.','\n',sim)) |>
+  ggplot(aes(x = sim, y = value)) +
+  geom_boxplot() +
+  facet_wrap(metric ~ ., scales = 'free_y') +
+  theme_minimal()
+```
+
+
+# Runtime
+
+## Fixed df, vary window size
+
+## Fixed window size, vary df
+
+```{r}
+sessionInfo()
+```

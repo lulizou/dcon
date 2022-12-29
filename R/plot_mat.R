@@ -14,6 +14,9 @@
 
 plot_mat <- function(mat, max = NULL, style = 'higlass', 
                      main = '', xlab = '', ylab = '') {
+  if (class(mat)[1]=='dgCMatrix') {
+    mat <- as.matrix(mat)
+  }
   if (!class(mat)[1]=='matrix') {
     stop('input should be a matrix')
   }

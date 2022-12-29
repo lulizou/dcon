@@ -179,7 +179,9 @@ construct_basis <- function(interval, df = NULL) {
 #' mean and variance
 simulate_log_rate <- function(len, df, alpha_mean = -1, alpha_sd = 2,
                               seed = 1, npeaks = NULL) {
-  set.seed(seed)
+  if (!is.null(seed)) {
+    set.seed(seed)
+  }
   B <- construct_basis(1:len, df = df)
   if (is.null(npeaks)) {
     a <- rnorm(n = df, mean = alpha_mean, sd = alpha_sd)
@@ -225,7 +227,7 @@ simulate_D <- function(len, decay = 1/3, gamma = 1, add_noise = NULL,
 simulate_y <- function(len, df, D = NULL, normalized = T,
                        alpha_mean = -1, alpha_sd = 2,
                        decay = 1/3, gamma = 1, npeaks = NULL,
-                       seed = 1) {
+                       seed = NULL) {
   log_rate_params <- simulate_log_rate(len, df, alpha_mean, alpha_sd, 
                                        seed = seed, npeaks = npeaks)
   if (is.null(D)) {

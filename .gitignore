@@ -5,3 +5,4 @@
 *.rds
 paper/*
 docs
+vignettes/*pdf

@@ -6,7 +6,7 @@ format:
 editor: source
 ---
 
-This vignette walks through deconvolution in 1D.
+This vignette walks through deconvolution in 1D. 
 
 ```{r}
 library(data.table)
@@ -20,8 +20,8 @@ set.seed(13579)
 
 # Quick start
 
-We first provide a quick example to show how the method works. For more
-details, see everything below the quick start section.
+We first provide a quick, self-contained example to show how the method works. 
+For more details, see everything below the quick start section.
 
 Here, we use a small sample of the
 RD-SPRITE data 
@@ -30,6 +30,8 @@ RD-SPRITE data
 We focus on the lncRNA *Airn* which is a part of the *Igf2r*
 imprinted cluster on chromosome 17 (mm10) and is thought to orchestrate 
 silencing of the gene  *Slc22a3*.
+
+Zoom-in on the first 30mb of chr17, which contains the *Airn* locus.
 
 
 ```{r load-data}
