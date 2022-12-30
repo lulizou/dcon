@@ -10,9 +10,9 @@ Deconvolution simulations
     id="toc-signal-strength-estimation">Signal strength estimation</a>
     -   <a href="#kcnq1ot1-like-1mb-domain"
         id="toc-kcnq1ot1-like-1mb-domain">Kcnq1ot1-like 1mb domain</a>
--   <a href="#sensitivity-specificity-precision-mad-all-in-one-plot"
-    id="toc-sensitivity-specificity-precision-mad-all-in-one-plot">Sensitivity,
-    specificity, precision, MAD all in one plot</a>
+-   <a href="#sensitivity-specificity-precision-rmse-all-in-one-plot"
+    id="toc-sensitivity-specificity-precision-rmse-all-in-one-plot">Sensitivity,
+    specificity, precision, RMSE all in one plot</a>
     -   <a href="#mb-domain" id="toc-mb-domain">10mb domain</a>
 -   <a href="#runtime" id="toc-runtime">Runtime</a>
     -   <a href="#fixed-df-vary-window-size"
@@ -59,7 +59,6 @@ library(gridExtra)
 library(pracma)
 library(dcon)
 set.seed(13579)
-B <- 100 # number of replicates to use for each simulation
 ```
 
 # DNA-DNA matrix
@@ -147,10 +146,12 @@ sim_localization <- function(B, len,
       next
     }
     fit <- fit_decon(sim$y, ddnorm_fit, df=df_fit)
+    rawfit <- fit_decon(sim$y, diag(len), df=df_fit)
     y <- as.numeric(exp(sim$B%*%sim$a))
     y_hat <- exp(fit$est)
+    y_hat_raw <- exp(rawfit$est)
     true_peaks <- findpeaks(y, minpeakheight = quantile(y, 0.9))
-    raw_peaks <- findpeaks(sim$y, minpeakheight = quantile(sim$y, 0.9))
+    raw_peaks <- findpeaks(y_hat_raw, minpeakheight = quantile(y_hat_raw, 0.9))
     fit_peaks <- findpeaks(y_hat, minpeakheight = quantile(y_hat, 0.9))
     if (is.null(true_peaks)) {
       next
@@ -211,7 +212,7 @@ sim_metrics <- function(B, len,
                         ddnorm_true, ddnorm_fit,
                         label = '') {
   replicate(B, {
-    sim <- sim_localization(B=10, len, df_true, df_fit, ddnorm_true, ddnorm_fit, '')
+    sim <- sim_localization(B=100, len, df_true, df_fit, ddnorm_true, ddnorm_fit, '')
     sim <- colSums(sim)
     z <- c(sim[1]/(sim[1]+sim[4]), sim[1]/(sim[1]+sim[2]),
            sim[5]/(sim[5]+sim[8]), sim[5]/(sim[5]+sim[6]))
@@ -223,6 +224,8 @@ sim_metrics <- function(B, len,
 ```
 
 ``` r
+# These take a long time to run so i did it on the cluster with B=1000
+B=1000
 ddnorm <- normalize_hic(dd1, gamma=0.9)
 # correctly specified
 res <- sim_metrics(B, 100, 10, 10, ddnorm, ddnorm, label = 'Correct-spec')
@@ -267,10 +270,12 @@ sim_signal_strength <- function(B, len,
     }
     nreps <- nreps + 1
     fit <- fit_decon(sim$y, ddnorm_fit, df=df_fit)
+    fit_raw <- fit_decon(sim$y, diag(len), df=df_fit)
     y <- exp(sim$B%*%sim$a)
     y_hat <- exp(fit$est)
+    y_hat_raw <- exp(fit_raw$est)
     results[nreps,] <- c(sqrt(mean((y-y_hat)**2)), median(abs(y-y_hat)),
-                         sqrt(mean((y-sim$y)**2)), median(abs(y-sim$y)))
+                         sqrt(mean((y-y_hat_raw)**2)), median(abs(y-y_hat_raw)))
   }
   return(results)
 }
@@ -279,6 +284,7 @@ sim_signal_strength <- function(B, len,
 ## Kcnq1ot1-like 1mb domain
 
 ``` r
+B <- 1000
 ddnorm <- normalize_hic(dd1, gamma=0.9)
 # correctly specified
 res <- sim_signal_strength(B, 100, 10, 10, ddnorm, ddnorm, 'Correct-spec')
@@ -302,14 +308,14 @@ res <- sim_signal_strength(B, 100, 10, 10, ddnorm, ddnorm2, 'g-high')
 allres2 <- cbind(allres2, res)
 ```
 
-# Sensitivity, specificity, precision, MAD all in one plot
+# Sensitivity, specificity, precision, RMSE all in one plot
 
 ``` r
 data.frame(allres2) |>
   pivot_longer(cols = everything()) |>
   separate(name, into = c('fit','metric', 'sim'), sep='_') |>
-  filter(metric == 'MAD') |>
-  mutate(metric = 'Median absolute deviation') |>
+  filter(metric == 'RMSE') |>
+  mutate(metric = 'RMSE') |>
   bind_rows(
     data.frame(t(allres)) |>
       pivot_longer(cols = everything()) |>
@@ -318,7 +324,7 @@ data.frame(allres2) |>
   mutate(sim = gsub('\\.','\n',sim)) |>
   ggplot(aes(x = sim, y = value)) +
   geom_boxplot(aes(fill = fit)) +
-  scale_fill_manual(name = '', breaks = c('Raw','Fit'), values = c('white','royalblue1'), labels = c('Observed', 'Deconvolved')) +
+  scale_fill_manual(name = '', breaks = c('Raw','Fit'), values = c('white','royalblue1'), labels = c('Observed smoothed', 'Deconvolved')) +
   facet_wrap(metric ~ ., scales = 'free_y', nrow=1) +
   theme_minimal() +
   theme(panel.border = element_rect(color = "gray 50", fill = NA),
@@ -328,9 +334,46 @@ data.frame(allres2) |>
         legend.position = 'bottom') +
   xlab('Simulation Condition') +
   ylab('')
+ggsave('simulation-metrics.pdf', height=3, width=6.5)
 ```
 
-![](simulations_files/figure-gfm/unnamed-chunk-10-1.png)
+``` r
+# (version where i ran it with B=1000 on the cluster)
+allres <- NULL
+for (i in 1:6) {
+  res <- readRDS(paste0('../paper/run_loc_sim_result_',i,'.rds'))
+  if (is.null(allres)) {
+    allres <- res
+  } else {
+    allres <- rbind(allres, res)
+  }
+}
+data.frame(allres2) |>
+  pivot_longer(cols = everything()) |>
+  separate(name, into = c('fit','metric', 'sim'), sep='_') |>
+  filter(metric == 'RMSE') |>
+  mutate(metric = 'RMSE') |>
+  bind_rows(
+    data.frame(t(allres)) |>
+      pivot_longer(cols = everything()) |>
+      separate(name, into = c('fit','metric', 'sim'), sep='_')
+  ) |>
+  mutate(sim = gsub('\\.','\n',sim)) |>
+  ggplot(aes(x = sim, y = value)) +
+  geom_boxplot(aes(fill = fit), outlier.size=0.25) +
+  scale_fill_manual(name = '', breaks = c('Raw','Fit'), values = c('white','royalblue1'), labels = c('Observed smoothed', 'Deconvolved')) +
+  facet_wrap(metric ~ ., scales = 'free_y', nrow=1) +
+  theme_minimal() +
+  theme(panel.border = element_rect(color = "gray 50", fill = NA),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.ticks = element_line(color='gray 50'),
+        legend.position = 'top') +
+  xlab('Simulation Condition') +
+  ylab('')
+```
+
+![](simulations_files/figure-gfm/unnamed-chunk-11-1.png)
 
 ``` r
 ggsave('simulation-metrics.pdf', height=3, width=6.5)
@@ -427,7 +470,8 @@ sessionInfo()
     [55] cli_3.4.1              stringi_1.7.8          farver_2.1.1          
     [58] XVector_0.38.0         reshape2_1.4.4         ragg_1.2.4            
     [61] ellipsis_0.3.2         generics_0.1.3         vctrs_0.5.1           
-    [64] spatstat.utils_3.0-1   tools_4.2.2            glue_1.6.2            
-    [67] purrr_0.3.5            abind_1.4-5            fastmap_1.1.0         
-    [70] yaml_2.3.6             spatstat.sparse_3.0-0  colorspace_2.0-3      
-    [73] GenomicRanges_1.50.1   spatstat.geom_3.0-3    knitr_1.41            
+    [64] spatstat.utils_3.0-1   RColorBrewer_1.1-3     tools_4.2.2           
+    [67] glue_1.6.2             purrr_0.3.5            abind_1.4-5           
+    [70] fastmap_1.1.0          yaml_2.3.6             spatstat.sparse_3.0-0 
+    [73] colorspace_2.0-3       GenomicRanges_1.50.1   spatstat.geom_3.0-3   
+    [76] knitr_1.41            

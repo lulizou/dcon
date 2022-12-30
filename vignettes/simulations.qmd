@@ -19,7 +19,6 @@ library(gridExtra)
 library(pracma)
 library(dcon)
 set.seed(13579)
-B <- 100 # number of replicates to use for each simulation
 ```
 
 # DNA-DNA matrix
@@ -42,7 +41,7 @@ plot_mat(dd30)
 
 We experimented with a few different coefficient distributions and plot some examples of their random signals here:
 
-```{r}
+```{r, fig.height=8}
 par(mfrow=c(4,4))
 ddnorm <- normalize_hic(dd1, gamma=0.9)
 for (i in 2:5) {
@@ -55,7 +54,7 @@ for (i in 2:5) {
 }
 ```
 
-```{r}
+```{r, fig.height=8}
 par(mfrow=c(4,4))
 ddnorm <- normalize_hic(dd30, gamma=0.9)
 for (i in 2:5) {
@@ -90,10 +89,12 @@ sim_localization <- function(B, len,
       next
     }
     fit <- fit_decon(sim$y, ddnorm_fit, df=df_fit)
+    rawfit <- fit_decon(sim$y, diag(len), df=df_fit)
     y <- as.numeric(exp(sim$B%*%sim$a))
     y_hat <- exp(fit$est)
+    y_hat_raw <- exp(rawfit$est)
     true_peaks <- findpeaks(y, minpeakheight = quantile(y, 0.9))
-    raw_peaks <- findpeaks(sim$y, minpeakheight = quantile(sim$y, 0.9))
+    raw_peaks <- findpeaks(y_hat_raw, minpeakheight = quantile(y_hat_raw, 0.9))
     fit_peaks <- findpeaks(y_hat, minpeakheight = quantile(y_hat, 0.9))
     if (is.null(true_peaks)) {
       next
@@ -154,7 +155,7 @@ sim_metrics <- function(B, len,
                         ddnorm_true, ddnorm_fit,
                         label = '') {
   replicate(B, {
-    sim <- sim_localization(B=10, len, df_true, df_fit, ddnorm_true, ddnorm_fit, '')
+    sim <- sim_localization(B=100, len, df_true, df_fit, ddnorm_true, ddnorm_fit, '')
     sim <- colSums(sim)
     z <- c(sim[1]/(sim[1]+sim[4]), sim[1]/(sim[1]+sim[2]),
            sim[5]/(sim[5]+sim[8]), sim[5]/(sim[5]+sim[6]))
@@ -166,7 +167,9 @@ sim_metrics <- function(B, len,
 ```
 
 
-```{r}
+```{r, eval=F}
+# These take a long time to run so i did it on the cluster with B=1000
+B=1000
 ddnorm <- normalize_hic(dd1, gamma=0.9)
 # correctly specified
 res <- sim_metrics(B, 100, 10, 10, ddnorm, ddnorm, label = 'Correct-spec')
@@ -211,10 +214,12 @@ sim_signal_strength <- function(B, len,
     }
     nreps <- nreps + 1
     fit <- fit_decon(sim$y, ddnorm_fit, df=df_fit)
+    fit_raw <- fit_decon(sim$y, diag(len), df=df_fit)
     y <- exp(sim$B%*%sim$a)
     y_hat <- exp(fit$est)
+    y_hat_raw <- exp(fit_raw$est)
     results[nreps,] <- c(sqrt(mean((y-y_hat)**2)), median(abs(y-y_hat)),
-                         sqrt(mean((y-sim$y)**2)), median(abs(y-sim$y)))
+                         sqrt(mean((y-y_hat_raw)**2)), median(abs(y-y_hat_raw)))
   }
   return(results)
 }
@@ -223,6 +228,7 @@ sim_signal_strength <- function(B, len,
 ## Kcnq1ot1-like 1mb domain
 
 ```{r}
+B <- 1000
 ddnorm <- normalize_hic(dd1, gamma=0.9)
 # correctly specified
 res <- sim_signal_strength(B, 100, 10, 10, ddnorm, ddnorm, 'Correct-spec')
@@ -247,14 +253,14 @@ allres2 <- cbind(allres2, res)
 ```
 
 
-# Sensitivity, specificity, precision, MAD all in one plot
+# Sensitivity, specificity, precision, RMSE all in one plot
 
-```{r}
+```{r, eval=F}
 data.frame(allres2) |>
   pivot_longer(cols = everything()) |>
   separate(name, into = c('fit','metric', 'sim'), sep='_') |>
-  filter(metric == 'MAD') |>
-  mutate(metric = 'Median absolute deviation') |>
+  filter(metric == 'RMSE') |>
+  mutate(metric = 'RMSE') |>
   bind_rows(
     data.frame(t(allres)) |>
       pivot_longer(cols = everything()) |>
@@ -263,7 +269,7 @@ data.frame(allres2) |>
   mutate(sim = gsub('\\.','\n',sim)) |>
   ggplot(aes(x = sim, y = value)) +
   geom_boxplot(aes(fill = fit)) +
-  scale_fill_manual(name = '', breaks = c('Raw','Fit'), values = c('white','royalblue1'), labels = c('Observed', 'Deconvolved')) +
+  scale_fill_manual(name = '', breaks = c('Raw','Fit'), values = c('white','royalblue1'), labels = c('Observed smoothed', 'Deconvolved')) +
   facet_wrap(metric ~ ., scales = 'free_y', nrow=1) +
   theme_minimal() +
   theme(panel.border = element_rect(color = "gray 50", fill = NA),
@@ -276,6 +282,43 @@ data.frame(allres2) |>
 ggsave('simulation-metrics.pdf', height=3, width=6.5)
 ```
 
+
+```{r}
+# (version where i ran it with B=1000 on the cluster)
+allres <- NULL
+for (i in 1:6) {
+  res <- readRDS(paste0('../paper/run_loc_sim_result_',i,'.rds'))
+  if (is.null(allres)) {
+    allres <- res
+  } else {
+    allres <- rbind(allres, res)
+  }
+}
+data.frame(allres2) |>
+  pivot_longer(cols = everything()) |>
+  separate(name, into = c('fit','metric', 'sim'), sep='_') |>
+  filter(metric == 'RMSE') |>
+  mutate(metric = 'RMSE') |>
+  bind_rows(
+    data.frame(t(allres)) |>
+      pivot_longer(cols = everything()) |>
+      separate(name, into = c('fit','metric', 'sim'), sep='_')
+  ) |>
+  mutate(sim = gsub('\\.','\n',sim)) |>
+  ggplot(aes(x = sim, y = value)) +
+  geom_boxplot(aes(fill = fit), outlier.size=0.25) +
+  scale_fill_manual(name = '', breaks = c('Raw','Fit'), values = c('white','royalblue1'), labels = c('Observed smoothed', 'Deconvolved')) +
+  facet_wrap(metric ~ ., scales = 'free_y', nrow=1) +
+  theme_minimal() +
+  theme(panel.border = element_rect(color = "gray 50", fill = NA),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.ticks = element_line(color='gray 50'),
+        legend.position = 'top') +
+  xlab('Simulation Condition') +
+  ylab('')
+ggsave('simulation-metrics.pdf', height=3, width=6.5)
+```
 
 
 ## 10mb domain

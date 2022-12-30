@@ -54,13 +54,13 @@ library(gridExtra)
 
 ``` r
 library(dcon)
-set.seed(13579)
+set.seed(4)
 ```
 
 # Quick start
 
-We first provide a quick example to show how the method works. For more
-details, see everything below the quick start section.
+We first provide a quick, self-contained example to show how the method
+works. For more details, see everything below the quick start section.
 
 Here, we use a small sample of the RD-SPRITE data
 ([GSE151515](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE151515)).
@@ -68,6 +68,8 @@ Here, we use a small sample of the RD-SPRITE data
 We focus on the lncRNA *Airn* which is a part of the *Igf2r* imprinted
 cluster on chromosome 17 (mm10) and is thought to orchestrate silencing
 of the gene *Slc22a3*.
+
+Zoom-in on the first 30mb of chr17, which contains the *Airn* locus.
 
 ``` r
 airn <- fread('/rafalab/lzou/rdsprite/count_windows/Airn_RNA_count_windows_10000_clusters_2-1000_chr17_129S1_SvImJ.csv') |>
@@ -243,12 +245,14 @@ for (g in c(0.25, 0.5, 0.75, 0.95)) {
   fit0.5 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.5, smooth = T), df = 10)
   fit0.75 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.75, smooth = T), df = 10)
   fit0.95 <- fit_decon(sim$y, normalize_hic(dd, gamma = 0.95, smooth = T), df = 10)
+  fit_smooth <- fit_decon(sim$y, diag(100), df=10)
   plot(1:100, sim$y, ylim=c(0,200), main = paste0('gamma=',g))
   lines(1:100, exp(sim$B%*%sim$a), col='red')
   lines(1:100, exp(fit0.25$est), col='#8cb0fb')
   lines(1:100, exp(fit0.5$est), col='#748cd0')
   lines(1:100, exp(fit0.75$est), col='#5b6aa6')
   lines(1:100, exp(fit0.95$est), col='#424b7e')
+  lines(1:100, exp(fit_smooth$est), col='black')
 }
 ```
 
@@ -261,15 +265,17 @@ dd <- data.frame(
   pos = 1:100,
   observed = sim$y,
   true = exp(sim$B%*%sim$a),
-  fit = exp(fit0.95$est)
+  fit = exp(fit0.95$est),
+  fit_smooth = exp(fit_smooth$est)
 ) |>
-  pivot_longer(cols = c(observed:fit), names_to = 'type', values_to = 'signal') |>
+  pivot_longer(cols = c(observed:fit_smooth), names_to = 'type', values_to = 'signal') |>
   mutate(color = case_when(
     type == 'true' ~ 'red',
-    type == 'observed' ~ 'black',
-    type == 'fit' ~ 'royalblue1'
+    type == 'observed' ~ 'gray',
+    type == 'fit' ~ 'royalblue1',
+    type == 'fit_smooth' ~ 'black'
   )) |>
-  mutate(type = factor(type, levels = c('true','observed','fit'), labels = c('True signal', 'Observed data', 'Deconvolved signal')))
+  mutate(type = factor(type, levels = c('true','observed','fit', 'fit_smooth'), labels = c('True signal', 'Observed data', 'Deconvolved signal', 'Observed smoothed')))
 
 p1 <- dd |>
   filter(type == 'True signal') |>
@@ -289,6 +295,7 @@ p2 <- dd |>
   filter(type == 'Observed data') |>
   ggplot(aes(x = pos, y = signal, color = color)) +
   geom_point(size=0.5) +
+  geom_line(data = dd |> filter(type == 'Observed smoothed'), aes(group=color)) +
   scale_color_identity() +
   theme_minimal() +
   theme(axis.text.x = element_blank(),
@@ -304,6 +311,7 @@ p3 <- dd |>
   geom_point(size=0.5) +
   geom_line() +
   geom_point(data = dd |> filter(type == 'Observed data'), size=0.5) +
+  geom_line(data = dd |> filter(type == 'Observed smoothed'), aes(group=color)) +
   theme_minimal() +
   scale_color_identity(guide = 'legend',
                        breaks = 'royalblue1',
