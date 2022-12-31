@@ -54,6 +54,8 @@ airn |>
 
 -   [Deconvolution in
     1D](https://github.com/lulizou/dcon/blob/main/vignettes/demo_1d.md)
+-   [Loop
+    deconvolution](https://github.com/lulizou/dcon/blob/main/vignettes/demo_2d.md)
 -   [Simulating
     data](https://github.com/lulizou/dcon/blob/main/vignettes/simulations.md)
 

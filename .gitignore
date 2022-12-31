@@ -6,3 +6,4 @@
 paper/*
 docs
 vignettes/*pdf
+vignettes/*cache
