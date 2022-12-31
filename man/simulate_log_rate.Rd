@@ -6,7 +6,14 @@
 assuming that the coefficients are normally distributed with specified
 mean and variance}
 \usage{
-simulate_log_rate(len, df, alpha_mean = -1, alpha_sd = 2, npeaks = NULL)
+simulate_log_rate(
+  len,
+  df,
+  alpha_mean = -1,
+  alpha_sd = 2,
+  seed = 1,
+  npeaks = NULL
+)
 }
 \description{
 Simulate the log(rate) using a linear combination of Gaussian basis functions

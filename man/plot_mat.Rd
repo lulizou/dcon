@@ -14,5 +14,6 @@ plot_mat(mat, max = NULL, style = "higlass", main = "", xlab = "", ylab = "")
 \item{style}{can be 'juicebox' or 'higlass' (default)}
 }
 \description{
-Style can be Juicebox or higlass
+Style can be Juicebox or higlass.
+Huge matrices can take a long time to plot!!!
 }

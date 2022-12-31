@@ -8,11 +8,13 @@ simulate_y(
   len,
   df,
   D = NULL,
+  normalized = T,
   alpha_mean = -1,
   alpha_sd = 2,
   decay = 1/3,
   gamma = 1,
-  npeaks = NULL
+  npeaks = NULL,
+  seed = NULL
 )
 }
 \description{

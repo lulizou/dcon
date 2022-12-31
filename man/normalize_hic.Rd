@@ -4,7 +4,7 @@
 \alias{normalize_hic}
 \title{Normalize Hi-C or DNA-DNA contact matrix before deconvolution}
 \usage{
-normalize_hic(M, gamma = 1, threshold = 5, smooth = F, sigma = 1)
+normalize_hic(M, gamma = 1, threshold = NULL, smooth = F, sigma = 1)
 }
 \arguments{
 \item{M}{the matrix of raw counts}

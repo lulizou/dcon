@@ -17,6 +17,9 @@ number of rows and columns equal to the length of reads.}
 is the length of reads.}
 
 \item{offset}{a vector of offset counts the same length as reads.}
+
+\item{hessian}{whether or not to compute the hessian at the estiamted
+coefficients; default is F.}
 }
 \value{
 a list containing \code{a}, the estimated coefficients, \code{B}, the
