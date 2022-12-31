@@ -143,8 +143,9 @@ The essential components are:
     `strawr::straw` and then convert them to sparse (maybe there are
     more efficient ways). Note the indices need to be converted to
     1-based in R.
-2.  Coordinates. I did create a function `dcon:::load_coords` in case
-    you also make them with the `bedtools makewindows` command.
+2.  Coordinates. Should be a data frame with the columns
+    `chrom start end id`. I did create a function `dcon:::load_coords`
+    in case you also make them with the `bedtools makewindows` command.
     Important: must have the `id` column which is used by the deconvolve
     function later. I just assign each window an integer in numerical
     order.
