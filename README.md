@@ -39,6 +39,8 @@ dd <- normalize_hic(raw_matrix)
 y_hat <- fit_decon(y, dd)
 ```
 
+For details, see the vignettes below.
+
 ## Vignettes
 
 -   [Deconvolution in
