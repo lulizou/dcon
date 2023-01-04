@@ -13,7 +13,7 @@ Dcon <- setClass(
     mat = 'list',
     coords = 'GRanges',
     loops = 'data.frame',
-    hic = 'list',
+    hic = 'Matrix',
     is_deconvolved = 'logical',
     results = 'list'
   ),
@@ -22,15 +22,18 @@ Dcon <- setClass(
     mat = list(),
     coords = GRanges(),
     loops = data.frame(),
-    hic = list(),
+    hic = Matrix(),
     is_deconvolved = F,
     results = list()
   ),
   
   validity = function(object) {
-    # if (is.null(object@coords$id)) {
-    #   return('coords must have 1 metadata column for the id')
-    # }
+    if (is.null(names(object@mat))) {
+      return('hichip matrices must be input as a named list')
+    }
+    if (is.null(coords$id)) {
+      
+    }
     return(TRUE)
   }
 )

@@ -1,7 +1,7 @@
 # accessory functions for importing data
 
 
-#' Get pairwise L1 and L2 norm differences from a list of matrices
+#' Get pairwise % L1 differences from a list of matrices
 #' and the indices at those matrices to calculate the differences on
 get_pairwise_diff <- function(matrix_list, idx1, idx2, label='') {
   diffs <- data.frame(t(combn(names(matrix_list),2)))
@@ -9,7 +9,7 @@ get_pairwise_diff <- function(matrix_list, idx1, idx2, label='') {
   diffs$label <- label
   diffs$diff <- NA
   for (i in 1:nrow(diffs)) {
-    diffs$diff[i] <- sum(abs(matrix_list[[diffs$m1[i]]][idx1, idx2]-matrix_list[[diffs$m2[i]]][idx1,idx2]))
+    diffs$diff[i] <- sum(abs(matrix_list[[diffs$m1[i]]][idx1, idx2]-matrix_list[[diffs$m2[i]]][idx1,idx2]))/sum(matrix_list[[diffs$m1[i]]][idx1, idx2])
   }
   return(diffs)
 }

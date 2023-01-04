@@ -24,14 +24,14 @@
 #' 
 #' @export
 
-normalize_hic <- function(M, gamma=1, threshold = NULL, smooth = F, sigma = 1) {
+normalize_hic <- function(M, gamma=1, threshold = 5, smooth = F, sigma = 1) {
   # threshold exists so that low count columns don't have large influence
   M <- as.matrix(M)
   if (any(is.na(M))) {
     stop('there are NA values in your matrix!')
   }
-  if (is.null(threshold)) {
-    threshold <- quantile(colSums(M), 0.005)
+  if (!any(diag(M)>0)) {
+    stop('there are no diagonal entries on the matrix that are non-zero')
   }
   thresh_idx <- which(colSums(M)<=threshold)
   if (length(thresh_idx)>0) {
