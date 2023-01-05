@@ -1,3 +1,5 @@
+RD-SPRITE lncRNA and repeat RNA tracks
+================
 
 # chrX
 
@@ -78,6 +80,7 @@ for (f in fnames) {
 windows |>
   pivot_longer(cols = starts_with('df'), names_sep='_', names_to=c('df','gamma')) |>
   mutate(df = gsub('df','',df), gamma = gsub('gamma', '',gamma)) |>
+  filter(gamma != 0.999) |>
   filter(start >= 90e6, end <= 120e6) |>
   ggplot(aes(x = start/1e6, y = value)) +
   geom_point(size=0.1) +
@@ -414,7 +417,7 @@ bigdf |>
   mutate(bin = as.numeric(as.character(bin))) |>
   mutate(type = factor(type, levels = c('Xist\nRaw', 'Xist\nDecon','CHART-\nseq', 'LINE1\nDecon', 'Alu/SINE\nDecon', 'Coding\nDecon'))) |>
   ggplot(aes(x = bin/1e6, y = value)) +
-  #geom_vline(xintercept = 103467500/1e6, color = 'red', size=0.25) +
+  geom_vline(xintercept = 103467500/1e6, color = 'red', size=0.25) +
   geom_bar(aes(color=color,fill=color),stat='identity') +
   facet_wrap(type ~ ., ncol = 1, scales = 'free_y',
              strip.position = 'right') +
@@ -440,15 +443,6 @@ ggsave('rdsprite-IGV-chart-xist-df-subset.pdf', height=4.25, width=6)
 ```
 
     ## Warning: Removed 213 rows containing missing values (`position_stack()`).
-
-``` r
-windows |>
-  ggplot(aes(x = start, y = coding_fit_0.95)) +
-  geom_point(aes(color = peak)) +
-  theme_classic()
-```
-
-![](rdsprite_track_plots_files/figure-gfm/unnamed-chunk-10-1.png)<!-- -->
 
 ## Percent of signal in peaks
 
@@ -511,102 +505,17 @@ data.frame(
   geom_point(aes(color=color)) +
   geom_line(aes(color=color, group=color)) +
   theme_classic() +
-  scale_x_discrete(breaks = c('raw', 'g0.25', 'g0.50', 'g0.75', 'g0.90','g0.95'), labels = c('Raw RD-\nSPRITE', 'g=0.25', 'g=0.50', 'g=0.75', 'g0.90', 'g0.95')) +
+  scale_x_discrete(breaks = c('raw', 'g0.25', 'g0.50', 'g0.75', 'g0.90','g0.95'), labels = c('Raw RD-\nSPRITE', 'g=0.25', 'g=0.50', 'g=0.75', 'g=0.90', 'g=0.95')) +
   scale_color_identity() +
   theme(axis.text.x = element_text(angle=90, hjust=1)) +
   ylab('Fraction of chrX signal in \nCHART-seq peaks') +
   xlab('')
 ```
 
-![](rdsprite_track_plots_files/figure-gfm/unnamed-chunk-11-1.png)<!-- -->
+![](rdsprite_track_plots_files/figure-gfm/unnamed-chunk-10-1.png)<!-- -->
 
 ``` r
 ggsave('rdsprite-fraction-xist-in-chart.pdf', height=3, width=3)
-```
-
-## Signal by chromatin state
-
-``` r
-chromstates <- fread('/rafalab/lzou/resources/mm10.10kb.windows.chromatin.states.bed', col.names = c('chrom','start','end','cschrom','csstart','csend','state','idk1','idk2','idk3','idk4','idk5','ovl')) |>
-  filter(chrom=='chrX') |>
-  group_by(chrom,start,end) |>
-  arrange(desc(ovl)) |>
-  dplyr::slice(1)
-windows$chromstate <- chromstates$state
-windows$d3[is.na(windows$d3)] <- 0
-windows$d3[windows$d3<0] <- 0
-percsig <- windows |>
-  group_by(chromstate) |>
-  summarise(xist_chart = sum(d3), xist_raw = sum(xist_raw), xist_g0.25 = sum(df100_gamma0.25), xist_g0.50 = sum(df100_gamma0.5), xist_g0.75 = sum(df100_gamma0.75), xist_g0.90 = sum(df100_gamma0.9), xist_g0.95 = sum(df100_gamma0.95), 
-            LINE_raw = sum(LINE_raw), LINE_g0.25 = sum(LINE_fit_0.25), LINE_g0.50 = sum(LINE_fit_0.5), LINE_g0.75 = sum(LINE_fit_0.75), LINE_g0.90 = sum(LINE_fit_0.9), LINE_g0.95 = sum(LINE_fit_0.95), 
-            SINE_raw = sum(SINE_raw), SINE_g0.25 = sum(SINE_fit_0.25), SINE_g0.50 = sum(SINE_fit_0.5), SINE_g0.75 = sum(SINE_fit_0.75), SINE_g0.90 = sum(SINE_fit_0.9), SINE_g0.95 = sum(SINE_fit_0.95), 
-            coding_raw = sum(coding_raw), coding_g0.25 = sum(coding_fit_0.25), coding_g0.50 = sum(coding_fit_0.5), coding_g0.75 = sum(coding_fit_0.75), coding_g0.90 = sum(coding_fit_0.9), coding_g0.95 = sum(coding_fit_0.95))
-percsig$xist_chart<- percsig$xist_chart/sum(windows$d3)
-percsig$xist_raw <- percsig$xist_raw/sum(windows$xist_raw)
-percsig$xist_g0.25 <- percsig$xist_g0.25/sum(windows$df100_gamma0.25)
-percsig$xist_g0.50 <- percsig$xist_g0.50/sum(windows$df100_gamma0.5)
-percsig$xist_g0.75 <- percsig$xist_g0.75/sum(windows$df100_gamma0.75)
-percsig$xist_g0.90 <- percsig$xist_g0.90/sum(windows$df100_gamma0.9)
-percsig$xist_g0.95 <- percsig$xist_g0.95/sum(windows$df100_gamma0.95)
-percsig$LINE_raw <- percsig$LINE_raw/sum(windows$LINE_raw)
-percsig$LINE_g0.25 <- percsig$LINE_g0.25/sum(windows$LINE_fit_0.25)
-percsig$LINE_g0.50 <- percsig$LINE_g0.50/sum(windows$LINE_fit_0.5)
-percsig$LINE_g0.75 <- percsig$LINE_g0.75/sum(windows$LINE_fit_0.75)
-percsig$LINE_g0.90 <- percsig$LINE_g0.90/sum(windows$LINE_fit_0.9)
-percsig$LINE_g0.95 <- percsig$LINE_g0.95/sum(windows$LINE_fit_0.95)
-percsig$SINE_raw <- percsig$SINE_raw/sum(windows$SINE_raw)
-percsig$SINE_g0.25 <- percsig$SINE_g0.25/sum(windows$SINE_fit_0.25)
-percsig$SINE_g0.50 <- percsig$SINE_g0.50/sum(windows$SINE_fit_0.5)
-percsig$SINE_g0.75 <- percsig$SINE_g0.75/sum(windows$SINE_fit_0.75)
-percsig$SINE_g0.90 <- percsig$SINE_g0.90/sum(windows$SINE_fit_0.9)
-percsig$SINE_g0.95 <- percsig$SINE_g0.95/sum(windows$SINE_fit_0.95)
-percsig$coding_raw <- percsig$coding_raw/sum(windows$coding_raw)
-percsig$coding_g0.25 <- percsig$coding_g0.25/sum(windows$coding_fit_0.25)
-percsig$coding_g0.50 <- percsig$coding_g0.50/sum(windows$coding_fit_0.5)
-percsig$coding_g0.75 <- percsig$coding_g0.75/sum(windows$coding_fit_0.75)
-percsig$coding_g0.90 <- percsig$coding_g0.90/sum(windows$coding_fit_0.9)
-percsig$coding_g0.95 <- percsig$coding_g0.95/sum(windows$coding_fit_0.95)
-
-percsig <- t(percsig[c(4,6),2:ncol(percsig)])
-
-data.frame(
-  label = rownames(percsig),
-  NS = percsig[,1],
-  TrP = percsig[,2]
-) |>
-  tidyr::separate(label, into = c('mol', 'type'), sep='_') |>
-  mutate(color = case_when(
-    type == 'chart' ~ '#3e6d33',
-    mol == 'xist' ~ '#5e88cf',
-    mol == 'LINE' ~ '#eb30b8',
-    mol == 'SINE' ~ '#ac00ec',
-    mol == 'coding' ~ '#5e3402'
-  )) |>
-  mutate(type = factor(type, levels = c('raw', 'g0.25', 'g0.50', 'g0.75', 'g0.90', 'g0.95', 'chart'))) |>
-  pivot_longer(cols = c(NS, TrP), names_to = 'chromatin_state', values_to = 'perc') |>
-  mutate(chromatin_state = ifelse(chromatin_state=='NS', 'Quiescent: No Signal (NS)', chromatin_state)) |>
-  mutate(chromatin_state = ifelse(chromatin_state=='TrP', 'Quiescent: Permissive Transcription (Tr-P)', chromatin_state)) |>
-  ggplot(aes(x = type, y = perc)) +
-  geom_point(aes(color=color)) +
-  geom_line(aes(color=color,group=color)) +
-  scale_color_identity() +
-  scale_x_discrete(breaks = c('raw', 'g0.25', 'g0.50', 'g0.75','g0.90','g0.95','chart'), labels = c('Raw RD-\nSPRITE', 'g=0.25', 'g=0.50', 'g=0.75', 'g=0.90','g=0.95', 'CHART-\nseq')) +
-  scale_y_continuous(breaks = pretty_breaks(n=3)) +
-  facet_wrap(chromatin_state ~ ., ncol = 1, scales='free_y') +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle=90, hjust=1),
-        panel.border = element_rect(color = "gray 50", fill = NA),
-        panel.grid.major = element_blank(),
-        panel.grid.minor = element_blank(),
-        axis.ticks = element_line(color='gray 50')) +
-  ylab('Fraction of chrX signal by chromatin state') +
-  xlab('')
-```
-
-![](rdsprite_track_plots_files/figure-gfm/unnamed-chunk-12-1.png)<!-- -->
-
-``` r
-ggsave('rdsprite-fraction-chromstates.pdf', height=4, width=3.1)
 ```
 
 # chr7
@@ -701,7 +610,7 @@ bigdf |>
   ylab('Kcnq1ot1 lncRNA Signal')
 ```
 
-![](rdsprite_track_plots_files/figure-gfm/unnamed-chunk-14-1.png)<!-- -->
+![](rdsprite_track_plots_files/figure-gfm/unnamed-chunk-12-1.png)<!-- -->
 
 ``` r
 ggsave('rdsprite-kcnq1ot1-df.pdf', height=3.75, width=6)
@@ -785,7 +694,7 @@ bigdf |>
   ylab('Signal')
 ```
 
-![](rdsprite_track_plots_files/figure-gfm/unnamed-chunk-16-1.png)<!-- -->
+![](rdsprite_track_plots_files/figure-gfm/unnamed-chunk-14-1.png)<!-- -->
 
 ``` r
 ggsave('rdsprite-line-sine-coding-track-chr7.pdf', height=4.25, width=6)
@@ -843,7 +752,7 @@ bigdf |>
   ylab('Signal')
 ```
 
-![](rdsprite_track_plots_files/figure-gfm/unnamed-chunk-17-1.png)<!-- -->
+![](rdsprite_track_plots_files/figure-gfm/unnamed-chunk-15-1.png)<!-- -->
 
 ``` r
 ggsave('rdsprite-kcnq1ot1-df-subset.pdf', height=4.25, width=6)
@@ -878,7 +787,7 @@ bigdf |>
 
     ## Warning: Removed 5 rows containing missing values (`position_stack()`).
 
-![](rdsprite_track_plots_files/figure-gfm/unnamed-chunk-18-1.png)<!-- -->
+![](rdsprite_track_plots_files/figure-gfm/unnamed-chunk-16-1.png)<!-- -->
 
 ``` r
 ggsave('rdsprite-IGV-kcnq1ot1-df-subset.pdf', height=4.25, width=6)
@@ -947,7 +856,7 @@ data.frame(
   xlab('')
 ```
 
-![](rdsprite_track_plots_files/figure-gfm/unnamed-chunk-19-1.png)<!-- -->
+![](rdsprite_track_plots_files/figure-gfm/unnamed-chunk-17-1.png)<!-- -->
 
 ``` r
 ggsave('rdsprite-fraction-kcnq1ot1-in-domain.pdf', height=3, width=3)
@@ -958,22 +867,27 @@ ggsave('rdsprite-fraction-kcnq1ot1-in-domain.pdf', height=3, width=3)
 ``` r
 chromstates <- fread('/rafalab/lzou/resources/mm10.10kb.windows.chromatin.states.bed', col.names = c('chrom','start','end','cschrom','csstart','csend','state','idk1','idk2','idk3','idk4','idk5','ovl')) |>
   filter(chrom=='chr7') |>
-  group_by(chrom,start,end) |>
-  arrange(desc(ovl)) |>
-  dplyr::slice(1)
-windows$chromstate <- chromstates$state
+  mutate(activity = case_when(
+    grepl('Pr-', state) ~ 4,
+    grepl('En-', state) ~ 3,
+    grepl('Tr-', state) ~ 2,
+    T ~ 1
+  )) |>
+  group_by(chrom, start, end) |>
+  summarise(activity = max(activity))
+```
+
+    ## `summarise()` has grouped output by 'chrom', 'start'. You can override using
+    ## the `.groups` argument.
+
+``` r
+windows$activity <- chromstates$activity
+
 percsig <- windows |>
-  group_by(chromstate) |>
-  summarise(kcnq1ot1_raw = sum(kcnq1ot1_raw), kcnq1ot1_g0.25 = sum(g0.25), kcnq1ot1_g0.50 = sum(g0.5), kcnq1ot1_g0.75 = sum(g0.75), kcnq1ot1_g0.90 = sum(g0.9), kcnq1ot1_g0.95 = sum(g0.95), 
-            LINE_raw = sum(LINE_raw), LINE_g0.25 = sum(LINE_fit_0.25), LINE_g0.50 = sum(LINE_fit_0.5), LINE_g0.75 = sum(LINE_fit_0.75), LINE_g0.90 = sum(LINE_fit_0.9), LINE_g0.95 = sum(LINE_fit_0.95), 
+  group_by(activity) |>
+  summarise(LINE_raw = sum(LINE_raw), LINE_g0.25 = sum(LINE_fit_0.25), LINE_g0.50 = sum(LINE_fit_0.5), LINE_g0.75 = sum(LINE_fit_0.75), LINE_g0.90 = sum(LINE_fit_0.9), LINE_g0.95 = sum(LINE_fit_0.95), 
             SINE_raw = sum(SINE_raw), SINE_g0.25 = sum(SINE_fit_0.25), SINE_g0.50 = sum(SINE_fit_0.5), SINE_g0.75 = sum(SINE_fit_0.75), SINE_g0.90 = sum(SINE_fit_0.9), SINE_g0.95 = sum(SINE_fit_0.95), 
             coding_raw = sum(coding_raw), coding_g0.25 = sum(coding_fit_0.25), coding_g0.50 = sum(coding_fit_0.5), coding_g0.75 = sum(coding_fit_0.75), coding_g0.90 = sum(coding_fit_0.9), coding_g0.95 = sum(coding_fit_0.95))
-percsig$kcnq1ot1_raw <- percsig$kcnq1ot1_raw/sum(windows$kcnq1ot1_raw)
-percsig$kcnq1ot1_g0.25 <- percsig$kcnq1ot1_g0.25/sum(windows$g0.25)
-percsig$kcnq1ot1_g0.50 <- percsig$kcnq1ot1_g0.50/sum(windows$g0.5)
-percsig$kcnq1ot1_g0.75 <- percsig$kcnq1ot1_g0.75/sum(windows$g0.75)
-percsig$kcnq1ot1_g0.90 <- percsig$kcnq1ot1_g0.90/sum(windows$g0.9)
-percsig$kcnq1ot1_g0.95 <- percsig$kcnq1ot1_g0.95/sum(windows$g0.95)
 percsig$LINE_raw <- percsig$LINE_raw/sum(windows$LINE_raw)
 percsig$LINE_g0.25 <- percsig$LINE_g0.25/sum(windows$LINE_fit_0.25)
 percsig$LINE_g0.50 <- percsig$LINE_g0.50/sum(windows$LINE_fit_0.5)
@@ -993,43 +907,44 @@ percsig$coding_g0.75 <- percsig$coding_g0.75/sum(windows$coding_fit_0.75)
 percsig$coding_g0.90 <- percsig$coding_g0.90/sum(windows$coding_fit_0.9)
 percsig$coding_g0.95 <- percsig$coding_g0.95/sum(windows$coding_fit_0.95)
 
-percsig <- t(percsig[c(7,12),2:ncol(percsig)])
+percsig <- t(percsig[,2:ncol(percsig)])
 
 data.frame(
   label = rownames(percsig),
-  NS = percsig[,1],
-  TrP = percsig[,2]
+  promoter = percsig[,4],
+  enhancer = percsig[,3],
+  transcription = percsig[,2],
+  heterochromatin = percsig[,1]
 ) |>
   tidyr::separate(label, into = c('mol', 'type'), sep='_') |>
   mutate(color = case_when(
-    mol == 'kcnq1ot1' ~ '#5e88cf',
     mol == 'LINE' ~ '#eb30b8',
     mol == 'SINE' ~ '#ac00ec',
     mol == 'coding' ~ '#5e3402'
   )) |>
   mutate(type = factor(type, levels = c('raw', 'g0.25', 'g0.50', 'g0.75', 'g0.90', 'g0.95'))) |>
-  pivot_longer(cols = c(NS, TrP), names_to = 'chromatin_state', values_to = 'perc') |>
-  mutate(chromatin_state = ifelse(chromatin_state=='NS', 'Quiescent: No Signal (NS)', chromatin_state)) |>
-  mutate(chromatin_state = ifelse(chromatin_state=='TrP', 'Quiescent: Permissive Transcription (Tr-P)', chromatin_state)) |>
+  pivot_longer(cols = c(transcription, heterochromatin), names_to = 'chromatin_state', values_to = 'perc') |>
+  mutate(chromatin_state = ifelse(chromatin_state=='transcription', 'Transcriptional', 'Heterochromatin')) |>
+  mutate(chromatin_state = factor(chromatin_state, levels = c('Transcriptional', 'Heterochromatin'))) |>
   ggplot(aes(x = type, y = perc)) +
   geom_point(aes(color=color)) +
   geom_line(aes(color=color,group=color)) +
   scale_color_identity() +
   scale_x_discrete(breaks = c('raw', 'g0.25', 'g0.50', 'g0.75','g0.90','g0.95'), labels = c('Raw RD-\nSPRITE', 'g=0.25', 'g=0.50', 'g=0.75', 'g=0.90','g=0.95')) +
   scale_y_continuous(breaks = pretty_breaks(n=3)) +
-  facet_wrap(chromatin_state ~ ., ncol = 1, scales='free_y') +
+  facet_wrap(chromatin_state ~ ., nrow = 1, scales='free_y') +
   theme_minimal() +
   theme(axis.text.x = element_text(angle=90, hjust=1),
-        panel.border = element_rect(color = "gray 50", fill = NA),
+        axis.line = element_line(),
         panel.grid.major = element_blank(),
         panel.grid.minor = element_blank(),
-        axis.ticks = element_line(color='gray 50')) +
-  ylab('Fraction of chr7 signal by chromatin state') +
+        axis.ticks = element_line()) +
+  ylab('Fraction of chr7 signal\nby chromatin state') +
   xlab('')
 ```
 
-![](rdsprite_track_plots_files/figure-gfm/unnamed-chunk-20-1.png)<!-- -->
+![](rdsprite_track_plots_files/figure-gfm/unnamed-chunk-18-1.png)<!-- -->
 
 ``` r
-ggsave('rdsprite-chr7-fraction-chromstates.pdf', height=4, width=3.1)
+ggsave('rdsprite-chr7-transcriptional-heterochromatin.pdf', height=3, width=6)
 ```
